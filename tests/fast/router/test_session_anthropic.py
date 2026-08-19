@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 import requests
+from sglang.srt.entrypoints.anthropic import utils as anthropic_utils
 
 import miles.rollout.session.core as core_module
 import miles.rollout.session.v2.core as v2_core_module
@@ -24,11 +25,6 @@ from miles.utils.chat_template_utils.message_matcher_hub import resolve_session_
 from miles.utils.http_utils import find_available_port
 from miles.utils.test_utils.mock_sglang_server import ProcessResult, with_mock_server
 from miles.utils.test_utils.uvicorn_thread_server import UvicornThreadServer
-
-anthropic_utils = pytest.importorskip(
-    "sglang.srt.entrypoints.anthropic.utils",
-    reason="this sglang lineage predates the anthropic conversion utils",
-)
 
 # Two-key arguments: the qwen25 parser re-serializes them in this key order,
 # so a replay whose input object uses the REVERSED key order re-serializes to
@@ -501,17 +497,3 @@ class TestMatcherGate:
         }
         replayed = self._replayed_assistant({"a": 1})
         assert strict_message_matches(stored, replayed) is True
-
-
-class TestUtilsUnavailable:
-    def test_route_answers_501_without_sglang_utils(self):
-        """On an sglang lineage without the conversion utils the route must
-        answer a clear Anthropic-enveloped 501 instead of letting the
-        catch-all proxy forward /v1/messages without session semantics."""
-        with patch.object(sessions_module, "anthropic_utils", None), _anthropic_env() as env:
-            session_id = _create_session(env.url)
-            resp = _post_messages(env.url, session_id, _payload([{"role": "user", "content": "hi"}]))
-        assert resp.status_code == 501
-        body = resp.json()
-        assert body["type"] == "error" and body["error"]["type"] == "api_error"
-        assert "sglang.srt.entrypoints.anthropic.utils" in body["error"]["message"]

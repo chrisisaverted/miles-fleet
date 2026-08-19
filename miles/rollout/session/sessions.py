@@ -9,7 +9,9 @@ import logging
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from sglang.srt.entrypoints.anthropic import utils as anthropic_utils
 from sglang.srt.entrypoints.openai.protocol import ChatCompletionResponse
+from sglang.srt.parser.template_detection import detect_inline_system_support
 from starlette.responses import Response
 
 from miles.rollout.session.core import JSON_MEDIA_TYPE, SessionCore, _render_json
@@ -21,16 +23,6 @@ from miles.utils.chat_template_utils.message_matcher_hub import (
     resolve_session_message_matcher,
 )
 from miles.utils.processing_utils import load_tokenizer
-
-try:
-    from sglang.srt.parser.template_detection import detect_inline_system_support
-except ImportError:  # older sglang lineages keep it under managers/
-    from sglang.srt.managers.template_detection import detect_inline_system_support
-
-try:
-    from sglang.srt.entrypoints.anthropic import utils as anthropic_utils
-except ImportError:  # sglang lineages predating the anthropic conversion utils
-    anthropic_utils = None
 
 logger = logging.getLogger(__name__)
 
@@ -133,17 +125,11 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
             body=body,
         )
 
-    if anthropic_utils is None:
-        anthropic_context = None
-        logger.warning(
-            "[session] sglang runtime lacks sglang.srt.entrypoints.anthropic.utils; /v1/messages will answer 501."
-        )
-    else:
-        # Immutable launch-profile policy for the Anthropic conversion, fixed
-        # at setup like the SGLang serving layer's constructor probe.
-        anthropic_context = anthropic_utils.AnthropicRequestContext(
-            merge_inline_system=not detect_inline_system_support(getattr(tokenizer, "chat_template", None))
-        )
+    # Immutable launch-profile policy for the Anthropic conversion, fixed
+    # at setup like the SGLang serving layer's constructor probe.
+    anthropic_context = anthropic_utils.AnthropicRequestContext(
+        merge_inline_system=not detect_inline_system_support(getattr(tokenizer, "chat_template", None))
+    )
 
     @app.post("/sessions/{session_id}/v1/messages")
     async def anthropic_messages(request: Request, session_id: str):
@@ -156,17 +142,6 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
         matches in registration order) so Anthropic traffic can never be
         silently proxied to the backend without session semantics.
         """
-        if anthropic_utils is None:
-            envelope = {
-                "type": "error",
-                "error": {
-                    "type": "api_error",
-                    "message": "Anthropic messages support requires an sglang runtime "
-                    "with sglang.srt.entrypoints.anthropic.utils",
-                },
-            }
-            return Response(content=_render_json(envelope), status_code=501, media_type=JSON_MEDIA_TYPE)
-
         body = await request.body()
         try:
             anthropic_request = anthropic_utils.parse_anthropic_request(body)
