@@ -4,11 +4,13 @@ import json
 import pytest
 from tests.e2e.sglang.test_session_server_multi_role import _common
 
+from miles.utils.test_utils import session_verify_runner
 from miles.utils.test_utils.session_verify_runner import (
     SESSION_VERIFY_INVARIANT_ARGS,
     assert_session_verify_metrics,
     namespace_to_train_args,
 )
+from miles.utils.tracking_utils.ci_history import RECORD_DIR_ENV
 
 
 def _build_args(**overrides) -> str:
@@ -97,7 +99,11 @@ def test_run_one_aligns_global_batch_size_with_sample_count(
     monkeypatch, n_samples_per_prompt, expected_global_batch_size
 ):
     captured = {}
-    monkeypatch.setattr(_common, "run_session_verify", lambda args: captured.setdefault("args", args))
+    monkeypatch.setattr(
+        _common,
+        "run_session_verify",
+        lambda args, *, wire_format: captured.update(args=args, wire_format=wire_format),
+    )
     config = _common.ModelConfig(
         model_name="test-model",
         reasoning_parser="qwen3",
@@ -114,12 +120,17 @@ def test_run_one_aligns_global_batch_size_with_sample_count(
     assert captured["args"].rollout_batch_size == 16
     assert captured["args"].rollout_max_response_len == 4096
     assert captured["args"].sglang_cuda_graph_backend_prefill == "disabled"
+    assert captured["wire_format"] == "openai"
 
 
 @pytest.mark.parametrize("version", ["v1", "v2"])
 def test_run_one_uses_requested_session_server_version(monkeypatch, version):
     captured = {}
-    monkeypatch.setattr(_common, "run_session_verify", lambda args: captured.setdefault("args", args))
+    monkeypatch.setattr(
+        _common,
+        "run_session_verify",
+        lambda args, *, wire_format: captured.update(args=args, wire_format=wire_format),
+    )
     config = _common.ModelConfig(
         model_name="test-model",
         reasoning_parser="qwen3",
@@ -130,12 +141,29 @@ def test_run_one_uses_requested_session_server_version(monkeypatch, version):
     _common.run_one(config, session_server_version=version)
 
     assert captured["args"].use_session_server == version
+    assert captured["wire_format"] == "openai"
+
+
+def test_run_one_rejects_anthropic_on_v1():
+    config = _common.ModelConfig(
+        model_name="test-model",
+        reasoning_parser="qwen3",
+        tool_call_parser="qwen25",
+        tito_model="qwen3",
+    )
+
+    with pytest.raises(ValueError, match="requires session server v2"):
+        _common.run_one(config, session_server_version="v1", endpoint="anthropic")
 
 
 @pytest.mark.parametrize(("n_samples_per_prompt", "expected_global_batch_size"), [(1, 8), (4, 32)])
-def test_run_both_versions_splits_rollout_batch(monkeypatch, n_samples_per_prompt, expected_global_batch_size):
+def test_run_both_versions_adds_v2_anthropic_pass(monkeypatch, n_samples_per_prompt, expected_global_batch_size):
     captured = []
-    monkeypatch.setattr(_common, "run_session_verify", lambda args: captured.append(args))
+    monkeypatch.setattr(
+        _common,
+        "run_session_verify",
+        lambda args, *, wire_format: captured.append((args, wire_format)),
+    )
     config = _common.ModelConfig(
         model_name="test-model",
         reasoning_parser="qwen3",
@@ -146,9 +174,21 @@ def test_run_both_versions_splits_rollout_batch(monkeypatch, n_samples_per_promp
 
     _common.run_both_versions(config)
 
-    assert [args.use_session_server for args in captured] == ["v1", "v2"]
-    assert [args.rollout_batch_size for args in captured] == [8, 8]
-    assert [args.global_batch_size for args in captured] == [expected_global_batch_size] * 2
+    args = [item[0] for item in captured]
+    assert [item[1] for item in captured] == ["openai", "openai", "anthropic"]
+    assert [item.use_session_server for item in args] == ["v1", "v2", "v2"]
+    assert [item.rollout_batch_size for item in args] == [8, 8, 8]
+    assert [item.global_batch_size for item in args] == [expected_global_batch_size] * 3
+    assert [item.custom_generate_function_path for item in args] == [
+        SESSION_VERIFY_INVARIANT_ARGS["custom_generate_function_path"],
+        SESSION_VERIFY_INVARIANT_ARGS["custom_generate_function_path"],
+        _common._ANTHROPIC_GENERATE,
+    ]
+    assert [item.custom_agent_function_path for item in args] == [
+        SESSION_VERIFY_INVARIANT_ARGS["custom_agent_function_path"],
+        SESSION_VERIFY_INVARIANT_ARGS["custom_agent_function_path"],
+        _common._ANTHROPIC_AGENT,
+    ]
 
 
 def test_namespace_to_train_args_omits_expert_parallel_for_single_expert():
@@ -201,3 +241,26 @@ def test_session_verify_metrics_requires_at_least_one_append_tool(tmp_path):
 
     with pytest.raises(AssertionError, match="no sample produced an append_tool action"):
         assert_session_verify_metrics(str(metrics_path), assistant_text_threshold=0.1)
+
+
+def test_session_verify_metrics_can_skip_multi_role_append_tool_gate(tmp_path):
+    metrics_path = tmp_path / "metrics.jsonl"
+    _write_metrics(
+        metrics_path,
+        [{"driver_events": ["anthropic_tool_use"], "had_assistant_mismatch": False}],
+    )
+
+    assert_session_verify_metrics(str(metrics_path), assistant_text_threshold=0.1, require_append_tool=False)
+
+
+@pytest.mark.parametrize(("wire_format", "disables_history"), [("openai", False), ("anthropic", True)])
+def test_session_verify_env_isolates_anthropic_from_openai_history(wire_format, disables_history):
+    args = argparse.Namespace(tito_model="qwen3")
+
+    env = session_verify_runner._session_verify_env(args, "/tmp/metrics.jsonl", wire_format=wire_format)
+
+    assert env["MILES_TITO_MODEL"] == "qwen3"
+    assert env["MILES_SESSION_VERIFY_METRICS_PATH"] == "/tmp/metrics.jsonl"
+    assert (RECORD_DIR_ENV in env) is disables_history
+    if disables_history:
+        assert env[RECORD_DIR_ENV] == ""

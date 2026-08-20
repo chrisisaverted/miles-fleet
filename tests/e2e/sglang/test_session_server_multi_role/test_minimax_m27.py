@@ -12,7 +12,7 @@ from tests.ci.metric_history import register_ci_gate
 from tests.e2e.sglang.test_session_server_multi_role._common import ModelConfig, run_both_versions
 
 register_cuda_ci(
-    est_time=800,
+    est_time=1200,
     suite="stage-c-4-gpu-h200",
     labels=["sglang"],
     disabled="MiniMax-M2.7 is deprecated.",

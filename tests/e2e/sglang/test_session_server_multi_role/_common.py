@@ -1,8 +1,9 @@
 """Shared types and runner for multi-role session-server TITO e2e tests.
 
 Each test file in this directory owns a single ``ModelConfig`` and drives it
-through ``run_both_versions(cfg)``. The runner applies the model-specific
-GPU topology centrally.
+through ``run_both_versions(cfg)``. Each model runs OpenAI on session v1 and
+v2, then Anthropic Messages on v2. The runner applies the model-specific GPU
+topology centrally.
 """
 
 import argparse
@@ -16,7 +17,15 @@ from miles.utils.test_utils.session_verify_runner import (
 )
 
 SessionServerVersion = Literal["v1", "v2"]
+SessionEndpoint = Literal["openai", "anthropic"]
 _SESSION_SERVER_VERSIONS: tuple[SessionServerVersion, ...] = ("v1", "v2")
+_SESSION_RUNS: tuple[tuple[SessionServerVersion, SessionEndpoint], ...] = (
+    ("v1", "openai"),
+    ("v2", "openai"),
+    ("v2", "anthropic"),
+)
+_ANTHROPIC_GENERATE = "miles.utils.test_utils.anthropic_session_verify_agent.generate"
+_ANTHROPIC_AGENT = "miles.utils.test_utils.anthropic_session_verify_agent.run_agent"
 
 
 @dataclass(frozen=True)
@@ -52,11 +61,18 @@ def run_one(
     cfg: ModelConfig,
     *,
     session_server_version: SessionServerVersion = "v2",
+    endpoint: SessionEndpoint = "openai",
     rollout_batch_size: int = SESSION_VERIFY_INVARIANT_ARGS["rollout_batch_size"],
 ) -> None:
+    if endpoint == "anthropic" and session_server_version != "v2":
+        raise ValueError("Anthropic per-model verification requires session server v2")
+
     invariants = dict(SESSION_VERIFY_INVARIANT_ARGS)
     invariants["use_session_server"] = session_server_version
     invariants["rollout_batch_size"] = rollout_batch_size
+    if endpoint == "anthropic":
+        invariants["custom_generate_function_path"] = _ANTHROPIC_GENERATE
+        invariants["custom_agent_function_path"] = _ANTHROPIC_AGENT
     # This harness produces one rollout batch, so its train-side batch divisor
     # must track the actual sample count when large-model lanes reduce samples.
     invariants["global_batch_size"] = invariants["rollout_batch_size"] * cfg.n_samples_per_prompt
@@ -79,10 +95,10 @@ def run_one(
         assistant_text_threshold=cfg.assistant_text_threshold,
         **invariants,
     )
-    run_session_verify(args=args)
+    run_session_verify(args=args, wire_format=endpoint)
 
 
 def run_both_versions(cfg: ModelConfig) -> None:
     rollout_batch_size = SESSION_VERIFY_INVARIANT_ARGS["rollout_batch_size"] // len(_SESSION_SERVER_VERSIONS)
-    for version in _SESSION_SERVER_VERSIONS:
-        run_one(cfg, session_server_version=version, rollout_batch_size=rollout_batch_size)
+    for version, endpoint in _SESSION_RUNS:
+        run_one(cfg, session_server_version=version, endpoint=endpoint, rollout_batch_size=rollout_batch_size)

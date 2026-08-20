@@ -28,12 +28,15 @@ import logging
 import os
 import shutil
 import tempfile
-from typing import Any
+from typing import Any, Literal
 
 import miles.utils.external_utils.command_utils as U
 from miles.utils.chat_template_utils import resolve_reasoning_and_tool_call_parser
+from miles.utils.tracking_utils.ci_history import RECORD_DIR_ENV
 
 logger = logging.getLogger(__name__)
+
+SessionWireFormat = Literal["openai", "anthropic"]
 
 # Soft cap on how many samples may report any assistant_text mismatch.  Hard
 # mismatch types (special_token_count / special_token_type / non_assistant_text)
@@ -195,12 +198,25 @@ def namespace_to_train_args(ns: argparse.Namespace) -> str:
     return " ".join(parts) + " "
 
 
-def run_session_verify(args: argparse.Namespace) -> None:
-    """Boot ``miles`` rollout pipeline and run the multi-role driver.
+def _session_verify_env(
+    args: argparse.Namespace, metrics_path: str, *, wire_format: SessionWireFormat
+) -> dict[str, str]:
+    env = {
+        "MILES_TITO_MODEL": args.tito_model,
+        "MILES_SESSION_VERIFY_METRICS_PATH": metrics_path,
+    }
+    if wire_format == "anthropic":
+        # This run still uses the local metrics file, but must not overwrite
+        # another endpoint's CI-history series under the same v2 metric key.
+        env[RECORD_DIR_ENV] = ""
+    return env
+
+
+def run_session_verify(args: argparse.Namespace, *, wire_format: SessionWireFormat = "openai") -> None:
+    """Boot ``miles`` rollout pipeline and run the session-verification driver.
 
     Returns nothing on success; raises ``AssertionError`` on TITO mismatch
-    (HTTP 500 from server-side prefix check) or coverage shortfall (raised by
-    ``session_verify_agent.generate``).
+    (HTTP 500 from server-side prefix check) or coverage shortfall raised by the selected generate wrapper.
 
     ``args`` MUST be a fully-shaped Namespace carrying miles-canonical field
     names plus the session-verify-specific fields (``session_verify_cycles``,
@@ -218,6 +234,9 @@ def run_session_verify(args: argparse.Namespace) -> None:
     - ``args.hf_checkpoint`` is replaced with the local download path so the
       composed train_args points at the downloaded model, not the HF id.
     """
+    if wire_format not in ("openai", "anthropic"):
+        raise ValueError(f"unsupported session verification wire format: {wire_format}")
+
     args.sglang_reasoning_parser, args.sglang_tool_call_parser = resolve_reasoning_and_tool_call_parser(
         args.tito_model, args.sglang_reasoning_parser, args.sglang_tool_call_parser
     )
@@ -228,7 +247,7 @@ def run_session_verify(args: argparse.Namespace) -> None:
     train_args = namespace_to_train_args(args)
 
     # Per-sample token-seq metrics file: rollout workers append one JSONL line
-    # per sample inside session_verify_agent.generate; we aggregate after
+    # per sample inside the selected generate wrapper; we aggregate after
     # execute_train returns to apply the assistant_text soft threshold.
     metrics_fd, metrics_path = tempfile.mkstemp(prefix="session_verify_metrics_", suffix=".jsonl")
     os.close(metrics_fd)
@@ -239,13 +258,14 @@ def run_session_verify(args: argparse.Namespace) -> None:
             train_args=train_args,
             num_gpus_per_node=args.actor_num_gpus_per_node,
             megatron_model_type=None,
-            extra_env_vars={
-                "MILES_TITO_MODEL": args.tito_model,
-                "MILES_SESSION_VERIFY_METRICS_PATH": metrics_path,
-            },
+            extra_env_vars=_session_verify_env(args, metrics_path, wire_format=wire_format),
         )
         try:
-            assert_session_verify_metrics(metrics_path, assistant_text_threshold=args.assistant_text_threshold)
+            assert_session_verify_metrics(
+                metrics_path,
+                assistant_text_threshold=args.assistant_text_threshold,
+                require_append_tool=wire_format == "openai",
+            )
         except AssertionError:
             preserved_metrics_path = metrics_path + ".failed"
             shutil.copy(metrics_path, preserved_metrics_path)
@@ -258,7 +278,9 @@ def run_session_verify(args: argparse.Namespace) -> None:
             pass
 
 
-def assert_session_verify_metrics(metrics_path: str, *, assistant_text_threshold: float) -> None:
+def assert_session_verify_metrics(
+    metrics_path: str, *, assistant_text_threshold: float, require_append_tool: bool = True
+) -> None:
     """Read per-sample JSONL metrics and assert cross-sample verifier gates.
 
     Forbidden mismatch types (special_*, non_assistant_text) are caught
@@ -290,7 +312,7 @@ def assert_session_verify_metrics(metrics_path: str, *, assistant_text_threshold
             "run before any sample completed.  Check rollout logs."
         )
 
-    if not has_append_tool:
+    if require_append_tool and not has_append_tool:
         raise AssertionError(
             "Session multi-role e2e: no sample produced an append_tool action — "
             "the model may not be tool-calling.  Check sampling temperature, "

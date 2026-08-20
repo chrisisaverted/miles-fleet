@@ -1,11 +1,9 @@
 import pytest
 from tests.session_parity_utils import (
-    ANTHROPIC_TOOL_AGENT_PATH,
     SESSION_PARITY_SEED,
     V1,
     V2,
     assert_agentic_retry_trajectory_parity,
-    assert_anthropic_tool_trajectory,
     assert_sample_bitwise_equal,
     run_agentic_retry_trajectories,
 )
@@ -70,30 +68,6 @@ def test_agentic_v2_drop_retries_matches_v1_training_payload_bitwise():
         assert v1.samples[0].weight_versions == _SELECTED_WEIGHT_VERSIONS
         assert v2.samples[0].weight_versions == _SELECTED_WEIGHT_VERSIONS
         assert_agentic_retry_trajectory_parity(v1, v2)
-
-
-@pytest.mark.parametrize("version", [V1, V2])
-def test_anthropic_messages_agent_records_canonical_openai_tito(version):
-    input_sample = Sample(
-        index=0,
-        rollout_id=0,
-        prompt=[],
-        reward=0.25,
-        metadata={"source": "anthropic-session", "anthropic_model": _MODEL},
-    )
-    with with_mock_server(model_name=_MODEL, process_fn=_process_agent_prompt) as backend:
-        [run] = run_agentic_retry_trajectories(
-            backend_url=backend.url,
-            hf_checkpoint=_MODEL,
-            version=version,
-            input_samples=[input_sample],
-            custom_agent_function_path=ANTHROPIC_TOOL_AGENT_PATH,
-            session_message_matcher="loose_tool_call",
-        )
-        assert len(backend.request_log) == 2
-
-    # MockSGLangServer omits stop-token IDs; the GPU test owns the hard TITO mismatch check.
-    assert_anthropic_tool_trajectory(run)
 
 
 def test_sample_bitwise_comparator_distinguishes_signed_zero():
