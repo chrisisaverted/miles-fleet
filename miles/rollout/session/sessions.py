@@ -159,8 +159,6 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
             )
         except SessionError as exc:
             return _anthropic_error_response(exc.status_code, _render_json({"error": str(exc)}))
-        except SessionMessageMatcherError as exc:
-            return _anthropic_error_response(500, _render_json({"error": str(exc)}))
         except Exception:
             # Preserve Anthropic error framing; cancellation still propagates.
             logger.exception("Anthropic chat processing failed for session %s", session_id)
