@@ -26,8 +26,7 @@ from miles.utils.processing_utils import load_tokenizer
 
 logger = logging.getLogger(__name__)
 
-# End-to-end metadata kept on Anthropic error responses; everything else from
-# the upstream response is dropped so framing headers describe the new body.
+# Preserve end-to-end error metadata; drop headers tied to the replaced body.
 _ANTHROPIC_ERROR_HEADER_ALLOWLIST = ("www-authenticate", "retry-after", "x-request-id")
 _ANTHROPIC_ERROR_HEADER_PREFIXES = ("x-ratelimit-", "anthropic-ratelimit-")
 
@@ -125,42 +124,27 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
             body=body,
         )
 
-    # Immutable launch-profile policy for the Anthropic conversion, fixed
-    # at setup like the SGLang serving layer's constructor probe.
     anthropic_context = anthropic_utils.AnthropicRequestContext(
         merge_inline_system=not detect_inline_system_support(getattr(tokenizer, "chat_template", None))
     )
 
+    # Keep before session_proxy: Starlette's first match must not bypass session/TITO.
     @app.post("/sessions/{session_id}/v1/messages")
     async def anthropic_messages(request: Request, session_id: str):
-        """Anthropic Messages wire wrapper over ``core.chat_completions``.
-
-        The sglang conversion utils translate the wire formats; session/TITO/
-        commit semantics, the canonical OpenAI ``SessionRecord``, and the
-        backend path (``/v1/chat/completions``) are exactly the OpenAI
-        route's. Registered before the catch-all ``session_proxy`` (Starlette
-        matches in registration order) so Anthropic traffic can never be
-        silently proxied to the backend without session semantics.
-        """
+        """Serve Anthropic Messages through the OpenAI session path."""
         body = await request.body()
         try:
             anthropic_request = anthropic_utils.parse_anthropic_request(body)
             openai_request = anthropic_utils.to_openai_request(anthropic_request, context=anthropic_context)
-            # Force the core call non-streaming so it returns one complete
-            # OpenAI JSON body; the client's stream intent is honored below
-            # as eagerly materialized fake SSE.
+            # Core is non-streaming; build fake SSE from its complete response below.
             openai_request.stream = False
             openai_request.stream_options = None
-            # exclude_unset keeps the body to Anthropic-derived fields so the
-            # canonical record matches an equivalent client-written OpenAI
-            # request instead of embedding vendored-model defaults.
+            # Omit defaults so equivalent Anthropic and OpenAI inputs produce the same canonical record.
             openai_body = _render_json(
                 openai_request.model_dump(mode="json", exclude_none=True, exclude_unset=True, by_alias=True)
             )
         except ValueError as exc:
-            # AnthropicRequestError plus non-encodable request values that
-            # _render_json rejects (e.g. NaN sampling params): every request
-            # construction failure is a 400 invalid_request_error.
+            # Parsing and JSON encoding failures are invalid Anthropic requests.
             return _anthropic_error_response(400, _render_json({"error": str(exc)}))
 
         anthropic_stream = bool(anthropic_request.stream)
@@ -178,9 +162,7 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
         except SessionMessageMatcherError as exc:
             return _anthropic_error_response(500, _render_json({"error": str(exc)}))
         except Exception:
-            # Frozen behavior: unexpected processing failures still wear the
-            # Anthropic error envelope (scrubbed generic 500) instead of the
-            # framework's text/plain page. CancelledError still propagates.
+            # Preserve Anthropic error framing; cancellation still propagates.
             logger.exception("Anthropic chat processing failed for session %s", session_id)
             return _anthropic_error_response(500, b"")
 
@@ -202,9 +184,7 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
             envelope = anthropic_utils.to_anthropic_response(openai_response)
             return Response(content=_anthropic_wire_json(envelope), status_code=200, media_type=JSON_MEDIA_TYPE)
         except Exception:
-            # Post-commit conversion failure — the accepted first-version
-            # boundary: core state is kept, the client gets a JSON 500,
-            # never a partial SSE body. (CancelledError still propagates.)
+            # Post-commit failures keep the record and return JSON 500, never partial SSE.
             logger.exception("Anthropic response conversion failed for session %s", session_id)
             return _anthropic_error_response(500, b"")
 
