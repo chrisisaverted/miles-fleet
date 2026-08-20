@@ -31,6 +31,7 @@ from miles.utils.types import Sample
 V1 = "v1"
 V2 = "v2"
 SESSION_PARITY_SEED = 20260803
+ANTHROPIC_TOOL_AGENT_PATH = "tests.e2e.sglang.utils.anthropic_session_tool_agent.run_agent"
 
 _CHAT_TIMEOUT_SECS = 120.0
 _PICKER_PATH = "miles.rollout.session.v2.picker_hub.drop_retries"
@@ -72,12 +73,20 @@ def run_agentic_retry_trajectories(
     hf_checkpoint: str,
     version: str,
     input_samples: list[Sample],
+    custom_agent_function_path: str = "miles.utils.test_utils.session_verify_agent.run_agent",
+    session_message_matcher: str = "strict",
 ) -> list[SessionParityRun]:
     """Run a concurrent weather-agent batch through one session version."""
     if version not in (V1, V2):
         raise ValueError(f"unknown session version: {version}")
 
-    with _serve_session(backend_url=backend_url, hf_checkpoint=hf_checkpoint, version=version) as args:
+    with _serve_session(
+        backend_url=backend_url,
+        hf_checkpoint=hf_checkpoint,
+        version=version,
+        custom_agent_function_path=custom_agent_function_path,
+        session_message_matcher=session_message_matcher,
+    ) as args:
         collected = asyncio.run(_run_and_collect(args=args, hf_checkpoint=hf_checkpoint, input_samples=input_samples))
 
     return [
@@ -205,6 +214,42 @@ def assert_agentic_retry_trajectory_parity(v1: SessionParityRun, v2: SessionPari
     )
 
 
+def assert_anthropic_tool_trajectory(run: SessionParityRun) -> None:
+    assert run.empty_reason is None
+    assert len(run.samples) == 1
+    sample = run.samples[0]
+    assert sample.status in (Sample.Status.PENDING, Sample.Status.COMPLETED)
+    assert sample.tokens
+    assert sample.response_length > 0
+
+    first_record, second_record = run.pre_collect["records"]
+    assert first_record["path"] == second_record["path"] == "/v1/chat/completions"
+    assert first_record["request"]["input_ids"]
+    assert second_record["request"]["input_ids"]
+    assert [message["role"] for message in first_record["request"]["messages"]] == ["system", "user"]
+
+    second_messages = second_record["request"]["messages"]
+    assert [message["role"] for message in second_messages] == ["system", "user", "assistant", "tool", "user"]
+    [tool_call] = second_messages[2]["tool_calls"]
+    assert second_messages[3]["tool_call_id"] == tool_call["id"]
+
+    expected_agent_metadata = {
+        "endpoint": "anthropic",
+        "record_count": 2,
+        "stable_prefix_checked": True,
+        "tool_use_count": 1,
+    }
+    for key, value in expected_agent_metadata.items():
+        assert run.samples[0].metadata[key] == value
+
+
+def assert_no_hard_tito_mismatch(run: SessionParityRun) -> None:
+    mismatches = run.pre_collect["metadata"].get("tito_session_mismatch")
+    assert mismatches is not None
+    forbidden_types = {"special_token_count", "special_token_type", "non_assistant_text"}
+    assert not [item for item in mismatches if item.get("type") in forbidden_types]
+
+
 def assert_sample_bitwise_equal(
     left: Sample,
     right: Sample,
@@ -227,7 +272,14 @@ def assert_sample_bitwise_equal(
 
 
 @contextmanager
-def _serve_session(*, backend_url: str, hf_checkpoint: str, version: str) -> Iterator[SimpleNamespace]:
+def _serve_session(
+    *,
+    backend_url: str,
+    hf_checkpoint: str,
+    version: str,
+    custom_agent_function_path: str,
+    session_message_matcher: str,
+) -> Iterator[SimpleNamespace]:
     port = find_available_port(31000)
     instance_id = f"session-parity-{version}"
     args = SimpleNamespace(
@@ -245,7 +297,8 @@ def _serve_session(*, backend_url: str, hf_checkpoint: str, version: str) -> Ite
         session_server_ports=[port],
         session_server_instance_ids={port: instance_id},
         save_debug_trajectory_data=None,
-        custom_agent_function_path="miles.utils.test_utils.session_verify_agent.run_agent",
+        custom_agent_function_path=custom_agent_function_path,
+        session_message_matcher=session_message_matcher,
         max_seq_len=None,
         session_verify_cycles=1,
         tool_call_failure_mode="rollback",

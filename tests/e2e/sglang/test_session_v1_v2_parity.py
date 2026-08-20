@@ -5,7 +5,15 @@ import torch
 from huggingface_hub import snapshot_download
 from tests.ci.ci_register import register_cuda_ci
 from tests.e2e.sglang.utils.sglang_server import start_sglang_server
-from tests.session_parity_utils import V1, V2, assert_agentic_retry_trajectory_parity, run_agentic_retry_trajectories
+from tests.session_parity_utils import (
+    ANTHROPIC_TOOL_AGENT_PATH,
+    V1,
+    V2,
+    assert_agentic_retry_trajectory_parity,
+    assert_anthropic_tool_trajectory,
+    assert_no_hard_tito_mismatch,
+    run_agentic_retry_trajectories,
+)
 
 from miles.utils.test_utils.session_verify_agent import build_initial_messages
 from miles.utils.types import Sample
@@ -66,6 +74,28 @@ def test_qwen3_8b_h200_fa3_agentic_v2_drop_retries_matches_v1_training_payload_b
     for index, (v1, v2) in enumerate(zip(v1_runs, v2_runs, strict=True)):
         assert v1.samples[0].index == v2.samples[0].index == index
         assert_agentic_retry_trajectory_parity(v1, v2)
+
+
+@pytest.mark.parametrize("version", [V1, V2])
+def test_qwen3_8b_anthropic_messages_tool_agent_uses_canonical_openai_tito(sglang_server, version):
+    input_sample = Sample(
+        index=0,
+        rollout_id=0,
+        prompt=[],
+        reward=0.25,
+        metadata={"source": "anthropic-session", "anthropic_model": _MODEL_PATH},
+    )
+    [run] = run_agentic_retry_trajectories(
+        backend_url=sglang_server.base_url,
+        hf_checkpoint=_MODEL_PATH,
+        version=version,
+        input_samples=[input_sample],
+        custom_agent_function_path=ANTHROPIC_TOOL_AGENT_PATH,
+        session_message_matcher="loose_tool_call",
+    )
+
+    assert_anthropic_tool_trajectory(run)
+    assert_no_hard_tito_mismatch(run)
 
 
 def _build_input_samples() -> list[Sample]:
