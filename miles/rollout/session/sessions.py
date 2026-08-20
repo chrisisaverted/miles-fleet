@@ -6,10 +6,14 @@ Thin layer: converts each HTTP request to primitive inputs, calls
 
 import json
 import logging
+from collections.abc import Iterator
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from sglang.srt.entrypoints.anthropic import utils as anthropic_utils
+from sglang.srt.entrypoints.anthropic.protocol import AnthropicMessagesRequest, is_server_tool
+from sglang.srt.entrypoints.anthropic.serving import convert_response, convert_to_chat_completion_request
 from sglang.srt.entrypoints.openai.protocol import ChatCompletionResponse
 from sglang.srt.parser.template_detection import detect_inline_system_support
 from starlette.responses import Response
@@ -54,6 +58,57 @@ def _anthropic_sse_body(events) -> bytes:
     return b"".join(
         f"event: {event.type}\ndata: ".encode() + _anthropic_wire_json(event) + b"\n\n" for event in events
     )
+
+
+def _parse_anthropic_request(body: bytes) -> AnthropicMessagesRequest:
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        raise ValueError(f"invalid JSON body: {exc}") from exc
+    try:
+        return AnthropicMessagesRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _iter_anthropic_message_blocks(request: AnthropicMessagesRequest) -> Iterator[object]:
+    for message in request.messages:
+        if isinstance(message.content, str):
+            continue
+        for block in message.content:
+            yield block
+            if block.type == "tool_result" and isinstance(block.content, list):
+                yield from block.content
+
+
+def _validate_anthropic_content_block(block) -> None:
+    if block.type in ("thinking", "redacted_thinking"):
+        raise ValueError("thinking content blocks are not supported by this endpoint")
+    if block.type == "image":
+        raise ValueError("image content blocks are not enabled for this deployment")
+    if block.type == "tool_reference":
+        raise ValueError("tool_reference content blocks are not enabled for this deployment")
+    if block.type == "search_result":
+        raise ValueError("search_result content blocks are not enabled for this deployment")
+
+
+def _validate_anthropic_features(request: AnthropicMessagesRequest) -> None:
+    if request.thinking is not None:
+        raise ValueError("thinking is not supported by this endpoint")
+    if request.output_config is not None:
+        raise ValueError("output_config is not enabled for this deployment")
+    if request.betas:
+        raise ValueError("betas is not enabled for this deployment")
+    if request.tools:
+        for tool in request.tools:
+            if is_server_tool(tool):
+                raise ValueError(f"server tool {tool.name!r} (type={tool.type!r}) is not enabled for this deployment")
+
+    if request.system is not None and not isinstance(request.system, str):
+        for block in request.system:
+            _validate_anthropic_content_block(block)
+    for block in _iter_anthropic_message_blocks(request):
+        _validate_anthropic_content_block(block)
 
 
 def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
@@ -124,9 +179,7 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
             body=body,
         )
 
-    anthropic_context = anthropic_utils.AnthropicRequestContext(
-        merge_inline_system=not detect_inline_system_support(getattr(tokenizer, "chat_template", None))
-    )
+    merge_inline_system = not detect_inline_system_support(getattr(tokenizer, "chat_template", None))
 
     # Keep before session_proxy: Starlette's first match must not bypass session/TITO.
     @app.post("/sessions/{session_id}/v1/messages")
@@ -134,8 +187,15 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
         """Serve Anthropic Messages through the OpenAI session path."""
         body = await request.body()
         try:
-            anthropic_request = anthropic_utils.parse_anthropic_request(body)
-            openai_request = anthropic_utils.to_openai_request(anthropic_request, context=anthropic_context)
+            anthropic_request = _parse_anthropic_request(body)
+            _validate_anthropic_features(anthropic_request)
+            try:
+                openai_request = convert_to_chat_completion_request(
+                    anthropic_request, merge_inline_system=merge_inline_system
+                )
+            except Exception as exc:
+                logger.exception("Error converting Anthropic request: %s", exc)
+                raise ValueError(str(exc)) from exc
             # Core is non-streaming; build fake SSE from its complete response below.
             openai_request.stream = False
             openai_request.stream_options = None
@@ -179,7 +239,7 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
                     headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
                     media_type="text/event-stream",
                 )
-            envelope = anthropic_utils.to_anthropic_response(openai_response)
+            envelope = convert_response(openai_response)
             return Response(content=_anthropic_wire_json(envelope), status_code=200, media_type=JSON_MEDIA_TYPE)
         except Exception:
             # Post-commit failures keep the record and return JSON 500, never partial SSE.

@@ -15,7 +15,8 @@ from unittest.mock import patch
 
 import pytest
 import requests
-from sglang.srt.entrypoints.anthropic import utils as anthropic_utils
+from sglang.srt.entrypoints.anthropic.protocol import AnthropicMessagesRequest
+from sglang.srt.entrypoints.anthropic.serving import convert_to_chat_completion_request
 
 import miles.rollout.session.core as core_module
 import miles.rollout.session.v2.core as v2_core_module
@@ -289,24 +290,286 @@ class TestAnthropicRoute:
 
         session_id = _create_session(anthropic_env.url)
         cases = [
-            b"{not json",
-            json.dumps({"model": "claude-test", "messages": [{"role": "user", "content": "x"}]}).encode(),
-            json.dumps(_payload([{"role": "user", "content": "x"}], thinking={"type": "disabled"})).encode(),
-            json.dumps(
-                _payload([{"role": "user", "content": [{"type": "image", "source": {"url": "https://x"}}]}])
-            ).encode(),
+            (
+                b"{not json",
+                "invalid JSON body: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
+            ),
+            (
+                json.dumps({"model": "claude-test", "messages": [{"role": "user", "content": "x"}]}).encode(),
+                None,
+            ),
         ]
-        for raw in cases:
-            resp = requests.post(
-                f"{anthropic_env.url}/sessions/{session_id}/v1/messages",
-                data=raw,
-                headers={"content-type": "application/json"},
-                timeout=10.0,
-            )
-            assert resp.status_code == 400, raw
-            assert resp.json()["error"]["type"] == "invalid_request_error"
-        # Anthropic-side validation failures never reach the core.
-        assert _records(anthropic_env.url, session_id) == []
+        backend_requests = len(anthropic_env.backend.request_log)
+        records = _records(anthropic_env.url, session_id)
+        with (
+            patch.object(core_module.SessionCore, "chat_completions", autospec=True) as v1_chat,
+            patch.object(v2_core_module.SessionCoreV2, "chat_completions", autospec=True) as v2_chat,
+        ):
+            for raw, exact_message in cases:
+                resp = requests.post(
+                    f"{anthropic_env.url}/sessions/{session_id}/v1/messages",
+                    data=raw,
+                    headers={"content-type": "application/json"},
+                    timeout=10.0,
+                )
+                assert resp.status_code == 400, raw
+                error = resp.json()["error"]
+                assert error["type"] == "invalid_request_error"
+                if exact_message is not None:
+                    assert error["message"] == exact_message
+                else:
+                    assert "max_tokens" in error["message"]
+        assert v1_chat.await_count == 0
+        assert v2_chat.await_count == 0
+        assert len(anthropic_env.backend.request_log) == backend_requests
+        assert _records(anthropic_env.url, session_id) == records
+
+    def test_fixed_feature_policy_rejects_before_core(self, anthropic_env):
+        messages = [{"role": "user", "content": "q"}]
+        cases = [
+            (
+                _payload(messages, thinking={"type": "disabled"}),
+                "thinking is not supported by this endpoint",
+            ),
+            (
+                _payload(messages, output_config={"effort": "high"}),
+                "output_config is not enabled for this deployment",
+            ),
+            (_payload(messages, betas=["b-1"]), "betas is not enabled for this deployment"),
+            (
+                _payload(messages, tools=[{"type": "web_search_20250305", "name": "web_search"}]),
+                "server tool 'web_search' (type='web_search_20250305') is not enabled for this deployment",
+            ),
+            (
+                _payload([{"role": "assistant", "content": [{"type": "thinking", "thinking": "t"}]}]),
+                "thinking content blocks are not supported by this endpoint",
+            ),
+            (
+                _payload([{"role": "assistant", "content": [{"type": "redacted_thinking", "data": "x"}]}]),
+                "thinking content blocks are not supported by this endpoint",
+            ),
+            (
+                _payload(
+                    [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "source": {"type": "base64", "data": "eA=="},
+                                }
+                            ],
+                        }
+                    ]
+                ),
+                "image content blocks are not enabled for this deployment",
+            ),
+            (
+                _payload([{"role": "user", "content": [{"type": "tool_reference", "tool_name": "f"}]}]),
+                "tool_reference content blocks are not enabled for this deployment",
+            ),
+            (
+                _payload([{"role": "user", "content": [{"type": "search_result", "title": "t"}]}]),
+                "search_result content blocks are not enabled for this deployment",
+            ),
+            (
+                _payload(
+                    [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "t",
+                                    "content": [{"type": "tool_reference", "tool_name": "f"}],
+                                }
+                            ],
+                        }
+                    ]
+                ),
+                "tool_reference content blocks are not enabled for this deployment",
+            ),
+            (
+                _payload(messages, system=[{"type": "image", "source": {"url": "https://x"}}]),
+                "image content blocks are not enabled for this deployment",
+            ),
+        ]
+        session_id = _create_session(anthropic_env.url)
+        backend_requests = len(anthropic_env.backend.request_log)
+        records = _records(anthropic_env.url, session_id)
+        with (
+            patch.object(core_module.SessionCore, "chat_completions", autospec=True) as v1_chat,
+            patch.object(v2_core_module.SessionCoreV2, "chat_completions", autospec=True) as v2_chat,
+        ):
+            for payload, message in cases:
+                resp = _post_messages(anthropic_env.url, session_id, payload)
+                assert resp.status_code == 400, payload
+                assert resp.json() == {
+                    "type": "error",
+                    "error": {"type": "invalid_request_error", "message": message},
+                }
+        assert v1_chat.await_count == 0
+        assert v2_chat.await_count == 0
+        assert len(anthropic_env.backend.request_log) == backend_requests
+        assert _records(anthropic_env.url, session_id) == records
+
+    def test_converter_exception_is_400_before_core(self, anthropic_env):
+        session_id = _create_session(anthropic_env.url)
+        backend_requests = len(anthropic_env.backend.request_log)
+        records = _records(anthropic_env.url, session_id)
+        with (
+            patch.object(
+                sessions_module,
+                "convert_to_chat_completion_request",
+                side_effect=RuntimeError("conversion boom"),
+            ),
+            patch.object(core_module.SessionCore, "chat_completions", autospec=True) as v1_chat,
+            patch.object(v2_core_module.SessionCoreV2, "chat_completions", autospec=True) as v2_chat,
+        ):
+            resp = _post_messages(anthropic_env.url, session_id, _payload([{"role": "user", "content": "q"}]))
+        assert resp.status_code == 400
+        assert resp.json() == {
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": "conversion boom"},
+        }
+        assert v1_chat.await_count == 0
+        assert v2_chat.await_count == 0
+        assert len(anthropic_env.backend.request_log) == backend_requests
+        assert _records(anthropic_env.url, session_id) == records
+
+    def test_feature_priority_is_stable(self):
+        messages = [
+            {"role": "user", "content": [{"type": "tool_reference", "tool_name": "f"}]},
+        ]
+        payloads = [
+            (
+                _payload(
+                    messages,
+                    thinking={"type": "disabled"},
+                    output_config={"effort": "high"},
+                    betas=["b-1"],
+                    tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                    system=[{"type": "image", "source": {"url": "https://x"}}],
+                ),
+                "thinking is not supported by this endpoint",
+            ),
+            (
+                _payload(
+                    messages,
+                    output_config={"effort": "high"},
+                    betas=["b-1"],
+                    tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                    system=[{"type": "image", "source": {"url": "https://x"}}],
+                ),
+                "output_config is not enabled for this deployment",
+            ),
+            (
+                _payload(
+                    messages,
+                    betas=["b-1"],
+                    tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                    system=[{"type": "image", "source": {"url": "https://x"}}],
+                ),
+                "betas is not enabled for this deployment",
+            ),
+            (
+                _payload(
+                    messages,
+                    tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                    system=[{"type": "image", "source": {"url": "https://x"}}],
+                ),
+                "server tool 'web_search' (type='web_search_20250305') is not enabled for this deployment",
+            ),
+            (
+                _payload(messages, system=[{"type": "image", "source": {"url": "https://x"}}]),
+                "image content blocks are not enabled for this deployment",
+            ),
+        ]
+        for payload, message in payloads:
+            request = AnthropicMessagesRequest.model_validate(payload)
+            with pytest.raises(ValueError) as exc_info:
+                sessions_module._validate_anthropic_features(request)
+            assert str(exc_info.value) == message
+
+    def test_policy_traversal_boundaries_match_converter(self):
+        system_nested = _payload(
+            [{"role": "user", "content": "q"}],
+            betas=[],
+            system=[
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "system-tool",
+                    "content": [{"type": "image", "source": {"url": "https://x"}}],
+                }
+            ],
+        )
+        request = AnthropicMessagesRequest.model_validate(system_nested)
+        sessions_module._validate_anthropic_features(request)
+        converted = convert_to_chat_completion_request(request, merge_inline_system=True)
+        assert converted.model_dump(mode="json", exclude_none=True)["messages"] == [{"role": "user", "content": "q"}]
+
+        depth_two = _payload(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "outer",
+                            "content": [
+                                {"type": "text", "text": "depth1"},
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "inner",
+                                    "content": [{"type": "image", "source": {"type": "base64", "data": "eA=="}}],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        )
+        request = AnthropicMessagesRequest.model_validate(depth_two)
+        sessions_module._validate_anthropic_features(request)
+        converted = convert_to_chat_completion_request(request, merge_inline_system=True)
+        dump = converted.model_dump(mode="json", exclude_none=True)
+        assert dump["messages"] == [{"role": "tool", "content": "depth1", "tool_call_id": "outer"}]
+        assert "image_url" not in json.dumps(dump)
+
+        arbitrary_json = _payload(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call1",
+                            "name": "f",
+                            "input": {"type": "image", "nested": {"type": "thinking"}},
+                        }
+                    ],
+                }
+            ],
+            metadata={"type": "search_result"},
+            tools=[
+                {
+                    "name": "f",
+                    "input_schema": {"type": "object", "properties": {"x": {"type": "image"}}},
+                }
+            ],
+        )
+        request = AnthropicMessagesRequest.model_validate(arbitrary_json)
+        sessions_module._validate_anthropic_features(request)
+        converted = convert_to_chat_completion_request(request, merge_inline_system=True)
+        dump = converted.model_dump(mode="json", exclude_none=True)
+        assert json.loads(dump["messages"][0]["tool_calls"][0]["function"]["arguments"]) == {
+            "type": "image",
+            "nested": {"type": "thinking"},
+        }
+        assert dump["tools"][0]["function"]["parameters"] == {
+            "type": "object",
+            "properties": {"x": {"type": "image"}},
+        }
 
     def test_backend_failure_maps_to_anthropic_error_without_record(self, anthropic_env):
         session_id = _create_session(anthropic_env.url)
@@ -319,7 +582,7 @@ class TestAnthropicRoute:
 
     def test_post_commit_conversion_failure_returns_500_and_keeps_record(self, anthropic_env):
         session_id = _create_session(anthropic_env.url)
-        with patch.object(sessions_module.anthropic_utils, "to_anthropic_response", side_effect=RuntimeError("boom")):
+        with patch.object(sessions_module, "convert_response", side_effect=RuntimeError("boom")):
             resp = _post_messages(anthropic_env.url, session_id, _payload([{"role": "user", "content": "hello"}]))
         assert resp.status_code == 500
         assert resp.json() == {"type": "error", "error": {"type": "api_error", "message": "Internal server error"}}
@@ -456,21 +719,18 @@ class TestMatcherGate:
     accept it, so tool launch profiles default to ``loose_tool_call``."""
 
     def _replayed_assistant(self, arguments_object: dict) -> dict:
-        request = anthropic_utils.parse_anthropic_request(
-            json.dumps(
-                _payload(
-                    [
-                        {"role": "user", "content": "q"},
-                        {
-                            "role": "assistant",
-                            "content": [{"type": "tool_use", "id": "call1", "name": "f", "input": arguments_object}],
-                        },
-                    ]
-                )
-            ).encode()
+        request = AnthropicMessagesRequest.model_validate(
+            _payload(
+                [
+                    {"role": "user", "content": "q"},
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "id": "call1", "name": "f", "input": arguments_object}],
+                    },
+                ]
+            )
         )
-        context = anthropic_utils.AnthropicRequestContext(merge_inline_system=True)
-        openai_request = anthropic_utils.to_openai_request(request, context=context)
+        openai_request = convert_to_chat_completion_request(request, merge_inline_system=True)
         return openai_request.model_dump(mode="json", exclude_none=True, by_alias=True)["messages"][-1]
 
     def test_strict_rejects_and_loose_accepts_respelled_arguments(self):
