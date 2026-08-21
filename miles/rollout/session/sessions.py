@@ -6,7 +6,6 @@ Thin layer: converts each HTTP request to primitive inputs, calls
 
 import json
 import logging
-from collections.abc import Iterator
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -71,19 +70,13 @@ def _parse_anthropic_request(body: bytes) -> AnthropicMessagesRequest:
         raise ValueError(str(exc)) from exc
 
 
-def _iter_anthropic_message_blocks(request: AnthropicMessagesRequest) -> Iterator[object]:
-    for message in request.messages:
-        if isinstance(message.content, str):
-            continue
-        for block in message.content:
-            yield block
-            if block.type == "tool_result" and isinstance(block.content, list):
-                yield from block.content
-
-
-def _validate_anthropic_content_block(block) -> None:
-    if block.type in ("thinking", "redacted_thinking"):
-        raise ValueError("thinking content blocks are not supported by this endpoint")
+def _validate_anthropic_content_block(block, *, allow_thinking: bool = False) -> None:
+    if block.type == "thinking":
+        if allow_thinking:
+            return
+        raise ValueError("thinking content blocks are only supported in assistant history")
+    if block.type == "redacted_thinking":
+        raise ValueError("redacted_thinking content blocks are not supported by this endpoint")
     if block.type == "image":
         raise ValueError("image content blocks are not enabled for this deployment")
     if block.type == "tool_reference":
@@ -107,8 +100,52 @@ def _validate_anthropic_features(request: AnthropicMessagesRequest) -> None:
     if request.system is not None and not isinstance(request.system, str):
         for block in request.system:
             _validate_anthropic_content_block(block)
-    for block in _iter_anthropic_message_blocks(request):
-        _validate_anthropic_content_block(block)
+    for message in request.messages:
+        if isinstance(message.content, str):
+            continue
+        for block in message.content:
+            _validate_anthropic_content_block(block, allow_thinking=message.role == "assistant")
+            if block.type == "tool_result" and isinstance(block.content, list):
+                for nested_block in block.content:
+                    _validate_anthropic_content_block(nested_block)
+
+
+def _strip_anthropic_reasoning_history(
+    anthropic_request: AnthropicMessagesRequest,
+) -> tuple[AnthropicMessagesRequest, list[str | None]]:
+    """Return a conversion copy plus canonical assistant reasoning history."""
+    conversion_messages = []
+    reasoning_history: list[str | None] = []
+    for message in anthropic_request.messages:
+        if message.role != "assistant":
+            conversion_messages.append(message)
+            continue
+        if isinstance(message.content, str):
+            conversion_messages.append(message)
+            reasoning_history.append(None)
+            continue
+        thinking_blocks = [block for block in message.content if block.type == "thinking"]
+        thinking_parts = [block.thinking for block in thinking_blocks if block.thinking]
+        reasoning_history.append("\n".join(thinking_parts) or None)
+        if thinking_blocks:
+            message = message.model_copy(
+                update={"content": [block for block in message.content if block.type != "thinking"]}
+            )
+        conversion_messages.append(message)
+    return anthropic_request.model_copy(update={"messages": conversion_messages}), reasoning_history
+
+
+def _restore_anthropic_reasoning_history(openai_body: dict, reasoning_history: list[str | None]) -> None:
+    """Map replayed assistant thinking blocks back to canonical reasoning content."""
+    assistants = [message for message in openai_body["messages"] if message["role"] == "assistant"]
+    if len(assistants) != len(reasoning_history):
+        raise ValueError(
+            f"assistant history count changed during Anthropic conversion: "
+            f"{len(reasoning_history)} before, {len(assistants)} after"
+        )
+    for message, reasoning_content in zip(assistants, reasoning_history, strict=True):
+        if reasoning_content is not None:
+            message["reasoning_content"] = reasoning_content
 
 
 def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
@@ -132,6 +169,7 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
         tokenizer_type=getattr(args, "tito_model", "default"),
         chat_template_kwargs=getattr(args, "apply_chat_template_kwargs", None),
     )
+    merge_inline_system = not detect_inline_system_support(getattr(tokenizer, "chat_template", None))
 
     use_v2 = getattr(args, "use_session_server", None) == "v2"
     if use_v2:
@@ -154,7 +192,10 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
 
     @app.get("/health")
     async def health():
-        return await core.health()
+        response = await core.health()
+        body = json.loads(response.body)
+        body["anthropic_intermediate_system_supported"] = not merge_inline_system
+        return Response(content=_render_json(body), status_code=response.status_code, media_type=JSON_MEDIA_TYPE)
 
     @app.post("/sessions")
     async def create_session():
@@ -179,8 +220,6 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
             body=body,
         )
 
-    merge_inline_system = not detect_inline_system_support(getattr(tokenizer, "chat_template", None))
-
     # Keep before session_proxy: Starlette's first match must not bypass session/TITO.
     @app.post("/sessions/{session_id}/v1/messages")
     async def anthropic_messages(request: Request, session_id: str):
@@ -190,8 +229,9 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
             anthropic_request = _parse_anthropic_request(body)
             _validate_anthropic_features(anthropic_request)
             try:
+                conversion_request, reasoning_history = _strip_anthropic_reasoning_history(anthropic_request)
                 openai_request = convert_to_chat_completion_request(
-                    anthropic_request, merge_inline_system=merge_inline_system
+                    conversion_request, merge_inline_system=merge_inline_system
                 )
             except Exception as exc:
                 logger.exception("Error converting Anthropic request: %s", exc)
@@ -200,9 +240,11 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
             openai_request.stream = False
             openai_request.stream_options = None
             # Omit defaults so equivalent Anthropic and OpenAI inputs produce the same canonical record.
-            openai_body = _render_json(
-                openai_request.model_dump(mode="json", exclude_none=True, exclude_unset=True, by_alias=True)
+            openai_body_dict = openai_request.model_dump(
+                mode="json", exclude_none=True, exclude_unset=True, by_alias=True
             )
+            _restore_anthropic_reasoning_history(openai_body_dict, reasoning_history)
+            openai_body = _render_json(openai_body_dict)
         except ValueError as exc:
             # Parsing and JSON encoding failures are invalid Anthropic requests.
             return _anthropic_error_response(400, _render_json({"error": str(exc)}))

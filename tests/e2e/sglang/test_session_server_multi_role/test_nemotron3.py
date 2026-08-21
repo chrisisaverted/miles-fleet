@@ -20,6 +20,7 @@ CONFIG = ModelConfig(
     cycles=2,
     assistant_text_threshold=1.0,
     tool_call_failure_mode="append_tool",
+    anthropic_intermediate_system_expectation="required",
 )
 
 

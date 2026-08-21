@@ -1,5 +1,7 @@
 import argparse
 import json
+import os
+import subprocess
 
 import pytest
 from tests.e2e.sglang.test_session_server_multi_role import _common
@@ -28,6 +30,7 @@ def _build_args(**overrides) -> str:
         "sglang_tool_call_parser": "qwen25",
         "sglang_context_length": None,
         "sglang_cuda_graph_backend_prefill": None,
+        "anthropic_intermediate_system_expectation": None,
     }
     values.update(overrides)
     return namespace_to_train_args(argparse.Namespace(**values))
@@ -62,6 +65,18 @@ def test_namespace_to_train_args_allows_session_server_v1():
     train_args = _build_args(use_session_server="v1")
 
     assert "--use-session-server v1" in train_args
+
+
+def test_namespace_to_train_args_emits_session_message_matcher():
+    assert "--session-message-matcher strict" in _build_args()
+    assert "--session-message-matcher loose_tool_call" in _build_args(session_message_matcher="loose_tool_call")
+
+
+def test_namespace_to_train_args_emits_anthropic_intermediate_system_expectation():
+    assert "--anthropic-intermediate-system-expectation" not in _build_args()
+    assert "--anthropic-intermediate-system-expectation required" in _build_args(
+        anthropic_intermediate_system_expectation="required"
+    )
 
 
 def test_namespace_to_train_args_has_no_append_role_policy_flag():
@@ -156,8 +171,36 @@ def test_run_one_rejects_anthropic_on_v1():
         _common.run_one(config, session_server_version="v1", endpoint="anthropic")
 
 
+def test_run_one_requires_explicit_anthropic_intermediate_system_expectation():
+    config = _common.ModelConfig(
+        model_name="test-model",
+        reasoning_parser="qwen3",
+        tool_call_parser="qwen25",
+        tito_model="qwen3",
+    )
+
+    with pytest.raises(ValueError, match="requires an intermediate-system expectation"):
+        _common.run_one(config, endpoint="anthropic")
+
+
 @pytest.mark.parametrize(("n_samples_per_prompt", "expected_global_batch_size"), [(1, 8), (4, 32)])
-def test_run_both_versions_adds_v2_anthropic_pass(monkeypatch, n_samples_per_prompt, expected_global_batch_size):
+@pytest.mark.parametrize(
+    ("threshold_overrides", "expected_thresholds"),
+    [
+        ({"assistant_text_threshold": 0.25}, [0.25, 0.25, 0.25]),
+        (
+            {"assistant_text_threshold": 0.25, "anthropic_assistant_text_threshold": 1.0},
+            [0.25, 0.25, 1.0],
+        ),
+    ],
+)
+def test_run_both_versions_adds_v2_anthropic_pass(
+    monkeypatch,
+    n_samples_per_prompt,
+    expected_global_batch_size,
+    threshold_overrides,
+    expected_thresholds,
+):
     captured = []
     monkeypatch.setattr(
         _common,
@@ -170,6 +213,8 @@ def test_run_both_versions_adds_v2_anthropic_pass(monkeypatch, n_samples_per_pro
         tool_call_parser="qwen25",
         tito_model="qwen3",
         n_samples_per_prompt=n_samples_per_prompt,
+        anthropic_intermediate_system_expectation="required",
+        **threshold_overrides,
     )
 
     _common.run_both_versions(config)
@@ -179,6 +224,9 @@ def test_run_both_versions_adds_v2_anthropic_pass(monkeypatch, n_samples_per_pro
     assert [item.use_session_server for item in args] == ["v1", "v2", "v2"]
     assert [item.rollout_batch_size for item in args] == [8, 8, 8]
     assert [item.global_batch_size for item in args] == [expected_global_batch_size] * 3
+    assert [item.assistant_text_threshold for item in args] == expected_thresholds
+    assert [item.session_message_matcher for item in args] == ["strict", "strict", "loose_tool_call"]
+    assert [item.anthropic_intermediate_system_expectation for item in args] == [None, None, "required"]
     assert [item.custom_generate_function_path for item in args] == [
         SESSION_VERIFY_INVARIANT_ARGS["custom_generate_function_path"],
         SESSION_VERIFY_INVARIANT_ARGS["custom_generate_function_path"],
@@ -189,6 +237,27 @@ def test_run_both_versions_adds_v2_anthropic_pass(monkeypatch, n_samples_per_pro
         SESSION_VERIFY_INVARIANT_ARGS["custom_agent_function_path"],
         _common._ANTHROPIC_AGENT,
     ]
+
+
+def test_run_both_versions_can_disable_anthropic(monkeypatch):
+    captured = []
+    monkeypatch.setattr(
+        _common,
+        "run_session_verify",
+        lambda args, *, wire_format: captured.append((args, wire_format)),
+    )
+    config = _common.ModelConfig(
+        model_name="test-model",
+        reasoning_parser="minimax-append-think",
+        tool_call_parser="minimax-m2",
+        tito_model="minimax_m27",
+        verify_anthropic=False,
+    )
+
+    _common.run_both_versions(config)
+
+    assert [wire_format for _, wire_format in captured] == ["openai", "openai"]
+    assert [args.use_session_server for args, _ in captured] == ["v1", "v2"]
 
 
 def test_namespace_to_train_args_omits_expert_parallel_for_single_expert():
@@ -251,6 +320,77 @@ def test_session_verify_metrics_can_skip_multi_role_append_tool_gate(tmp_path):
     )
 
     assert_session_verify_metrics(str(metrics_path), assistant_text_threshold=0.1, require_append_tool=False)
+
+
+def test_session_verify_metrics_hard_mismatch_precedes_soft_threshold(tmp_path):
+    metrics_path = tmp_path / "metrics.jsonl"
+    _write_metrics(
+        metrics_path,
+        [
+            {
+                "driver_events": [],
+                "had_assistant_mismatch": True,
+                "hard_mismatch_count": 1,
+                "hard_mismatch_types": ["special_token_count"],
+                "hard_mismatch_example": {"type": "special_token_count"},
+            }
+        ],
+    )
+
+    with pytest.raises(AssertionError, match="hard TITO mismatches.*special_token_count"):
+        assert_session_verify_metrics(str(metrics_path), assistant_text_threshold=0.0)
+
+
+def test_session_verify_metrics_keeps_assistant_text_soft(tmp_path):
+    metrics_path = tmp_path / "metrics.jsonl"
+    _write_metrics(
+        metrics_path,
+        [{"driver_events": ["append_tool"], "had_assistant_mismatch": True}],
+    )
+
+    assert_session_verify_metrics(str(metrics_path), assistant_text_threshold=1.0)
+    with pytest.raises(AssertionError, match="assistant_text mismatch ratio"):
+        assert_session_verify_metrics(str(metrics_path), assistant_text_threshold=0.0)
+
+
+@pytest.mark.parametrize("failure_phase", ["execute_train", "post_gate"])
+def test_run_session_verify_preserves_sidecar_on_failure(monkeypatch, tmp_path, failure_phase):
+    metrics_path = tmp_path / "metrics.jsonl"
+    metrics_fd = os.open(metrics_path, os.O_CREAT | os.O_RDWR)
+    monkeypatch.setattr(session_verify_runner.tempfile, "mkstemp", lambda **kwargs: (metrics_fd, str(metrics_path)))
+    monkeypatch.setattr(
+        session_verify_runner,
+        "resolve_reasoning_and_tool_call_parser",
+        lambda tito_model, reasoning_parser, tool_call_parser: (reasoning_parser, tool_call_parser),
+    )
+    monkeypatch.setattr(session_verify_runner, "_ensure_prompt_data", lambda: None)
+    monkeypatch.setattr(session_verify_runner, "_clear_proxy_env", lambda: None)
+    monkeypatch.setattr(session_verify_runner, "_ensure_model_downloaded", lambda checkpoint: checkpoint)
+    monkeypatch.setattr(session_verify_runner, "namespace_to_train_args", lambda args: "train args")
+
+    def fake_execute_train(**kwargs):
+        sidecar = kwargs["extra_env_vars"]["MILES_SESSION_VERIFY_METRICS_PATH"]
+        with open(sidecar, "w") as f:
+            f.write('{"hard_mismatch_count": 1}\n')
+        if failure_phase == "execute_train":
+            raise subprocess.CalledProcessError(1, "ray job submit")
+
+    monkeypatch.setattr(session_verify_runner.U, "execute_train", fake_execute_train)
+    args = argparse.Namespace(
+        tito_model="qwen3",
+        sglang_reasoning_parser="qwen3",
+        sglang_tool_call_parser="qwen25",
+        hf_checkpoint="/models/test",
+        actor_num_gpus_per_node=8,
+        assistant_text_threshold=0.2,
+    )
+
+    expected_error = subprocess.CalledProcessError if failure_phase == "execute_train" else AssertionError
+    with pytest.raises(expected_error):
+        session_verify_runner.run_session_verify(args)
+
+    assert not metrics_path.exists()
+    assert (tmp_path / "metrics.jsonl.failed").read_text() == '{"hard_mismatch_count": 1}\n'
 
 
 @pytest.mark.parametrize(("wire_format", "disables_history"), [("openai", False), ("anthropic", True)])

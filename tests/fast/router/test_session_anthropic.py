@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 import requests
+from fastapi.responses import JSONResponse
 from sglang.srt.entrypoints.anthropic.protocol import AnthropicMessagesRequest
 from sglang.srt.entrypoints.anthropic.serving import convert_to_chat_completion_request
 
@@ -24,7 +25,8 @@ from miles.rollout.session import sessions as sessions_module
 from miles.rollout.session.server import SessionServer
 from miles.utils.chat_template_utils.message_matcher_hub import resolve_session_message_matcher, strict_message_matches
 from miles.utils.http_utils import find_available_port
-from miles.utils.test_utils.mock_sglang_server import ProcessResult, with_mock_server
+from miles.utils.processing_utils import load_tokenizer
+from miles.utils.test_utils.mock_sglang_server import MockSGLangServer, ProcessResult, with_mock_server
 from miles.utils.test_utils.uvicorn_thread_server import UvicornThreadServer
 
 # Two-key arguments: the qwen25 parser re-serializes them in this key order,
@@ -35,8 +37,6 @@ _TOOLS = [{"name": "get_weather", "description": "weather", "input_schema": {"ty
 
 
 def _process_fn(prompt: str) -> ProcessResult:
-    if "RAISE" in prompt:
-        raise RuntimeError("mock backend failure")
     if "sunny" in prompt:
         return ProcessResult(text="final-answer", finish_reason="stop")
     if "use the weather tool" in prompt:
@@ -119,6 +119,10 @@ def _parse_sse(body: str) -> list[tuple[str, dict]]:
 
 
 class TestAnthropicRoute:
+    def test_health_reports_live_intermediate_system_capability(self, anthropic_env):
+        body = requests.get(f"{anthropic_env.url}/health", timeout=5.0).json()
+        assert body["anthropic_intermediate_system_supported"] is True
+
     def test_non_stream_text_creates_canonical_openai_record(self, anthropic_env):
         session_id = _create_session(anthropic_env.url)
         resp = _post_messages(
@@ -145,6 +149,153 @@ class TestAnthropicRoute:
         ]
         assert isinstance(record["request"]["input_ids"], list) and record["request"]["input_ids"]
         assert record["response"]["object"] == "chat.completion"
+
+    def test_assistant_thinking_history_becomes_canonical_reasoning_content(self, anthropic_env):
+        session_id = _create_session(anthropic_env.url)
+        resp = _post_messages(
+            anthropic_env.url,
+            session_id,
+            _payload(
+                [
+                    {"role": "user", "content": "first"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "ponder\n"},
+                            {"type": "text", "text": "hello"},
+                        ],
+                    },
+                    {"role": "user", "content": "again"},
+                ]
+            ),
+        )
+        assert resp.status_code == 200
+
+        [record] = _records(anthropic_env.url, session_id)
+        assistant = record["request"]["messages"][1]
+        assert assistant["role"] == "assistant"
+        assert assistant["content"] == "hello"
+        assert assistant["reasoning_content"] == "ponder\n"
+
+    @pytest.mark.parametrize(
+        ("remaining_block", "expected_content"),
+        [
+            (None, ""),
+            (
+                {"type": "tool_use", "id": "call1", "name": "get_weather", "input": {"city": "Paris"}},
+                None,
+            ),
+        ],
+    )
+    def test_assistant_thinking_strip_preserves_the_rest_of_the_message(self, remaining_block, expected_content):
+        content = [{"type": "thinking", "thinking": "first"}, {"type": "thinking", "thinking": "second"}]
+        if remaining_block is not None:
+            content.append(remaining_block)
+        request = AnthropicMessagesRequest.model_validate(_payload([{"role": "assistant", "content": content}]))
+
+        conversion_request, reasoning_history = sessions_module._strip_anthropic_reasoning_history(request)
+        converted = convert_to_chat_completion_request(conversion_request, merge_inline_system=True)
+        dumped = converted.model_dump(mode="json", exclude_none=True, exclude_unset=True, by_alias=True)
+        sessions_module._restore_anthropic_reasoning_history(dumped, reasoning_history)
+
+        [assistant] = dumped["messages"]
+        assert assistant["reasoning_content"] == "first\nsecond"
+        if expected_content is not None:
+            assert assistant["content"] == expected_content
+        else:
+            assert assistant["tool_calls"][0]["function"]["name"] == "get_weather"
+
+    def test_assistant_thinking_response_replays_as_the_same_canonical_history(self, anthropic_env, monkeypatch):
+        original = anthropic_env.backend._compute_chat_completions_response
+
+        def with_reasoning(payload):
+            response = original(payload)
+            response["choices"][0]["message"]["reasoning_content"] = "ponder\n"
+            return response
+
+        monkeypatch.setattr(anthropic_env.backend, "_compute_chat_completions_response", with_reasoning)
+        session_id = _create_session(anthropic_env.url)
+        first = _post_messages(
+            anthropic_env.url,
+            session_id,
+            _payload([{"role": "user", "content": "first"}]),
+        )
+        assert first.status_code == 200
+        assert first.json()["content"][0] == {"type": "thinking", "thinking": "ponder\n"}
+
+        second = _post_messages(
+            anthropic_env.url,
+            session_id,
+            _payload(
+                [
+                    {"role": "user", "content": "first"},
+                    {"role": "assistant", "content": first.json()["content"]},
+                    {"role": "user", "content": "again"},
+                ]
+            ),
+        )
+        assert second.status_code == 200
+
+        records = _records(anthropic_env.url, session_id)
+        assert len(records) == 2
+        stored = records[0]["response"]["choices"][0]["message"]
+        replayed = records[1]["request"]["messages"][1]
+        assert strict_message_matches(stored, replayed)
+        assert replayed["reasoning_content"] == "ponder\n"
+
+    def test_intermediate_system_stays_in_place(self, anthropic_env):
+        leading_system = "initial policy"
+        intermediate_system = "answer briefly"
+        session_id = _create_session(anthropic_env.url)
+        first = _post_messages(
+            anthropic_env.url,
+            session_id,
+            _payload([{"role": "user", "content": "first"}], system=leading_system),
+        )
+        assert first.status_code == 200
+
+        second = _post_messages(
+            anthropic_env.url,
+            session_id,
+            _payload(
+                [
+                    {"role": "user", "content": "first"},
+                    {"role": "assistant", "content": first.json()["content"]},
+                    {"role": "system", "content": intermediate_system},
+                    {"role": "user", "content": "again"},
+                ],
+                system=leading_system,
+            ),
+        )
+        assert second.status_code == 200
+
+        snapshot = requests.get(f"{anthropic_env.url}/sessions/{session_id}", timeout=5.0).json()
+        first_record, second_record = snapshot["records"]
+        messages = second_record["request"]["messages"]
+        assert [message["role"] for message in messages] == [
+            "system",
+            "user",
+            "assistant",
+            "system",
+            "user",
+        ]
+        assert [message for message in messages if message["role"] == "system"] == [
+            {"role": "system", "content": leading_system},
+            {"role": "system", "content": intermediate_system},
+        ]
+
+        completion_ids = [
+            item[1] for item in first_record["response"]["choices"][0]["meta_info"]["output_token_logprobs"]
+        ]
+        expected_prefix = first_record["request"]["input_ids"] + completion_ids
+        check_len = max(0, len(expected_prefix) - snapshot["metadata"]["max_trim_tokens"])
+        assert second_record["request"]["input_ids"][:check_len] == expected_prefix[:check_len]
+        decoded_suffix = load_tokenizer("Qwen/Qwen3-0.6B", trust_remote_code=True).decode(
+            second_record["request"]["input_ids"][check_len:]
+        )
+        assert decoded_suffix.index(intermediate_system) < decoded_suffix.index("again")
+        if anthropic_env.version == "v2":
+            assert [node["parent"] for node in snapshot["metadata"]["tree"]["nodes"]] == [None, 0]
 
     def test_stream_returns_eager_fake_sse(self, anthropic_env):
         session_id = _create_session(anthropic_env.url)
@@ -341,12 +492,37 @@ class TestAnthropicRoute:
                 "server tool 'web_search' (type='web_search_20250305') is not enabled for this deployment",
             ),
             (
-                _payload([{"role": "assistant", "content": [{"type": "thinking", "thinking": "t"}]}]),
-                "thinking content blocks are not supported by this endpoint",
+                _payload([{"role": "user", "content": [{"type": "thinking", "thinking": "t"}]}]),
+                "thinking content blocks are only supported in assistant history",
+            ),
+            (
+                _payload([{"role": "system", "content": [{"type": "thinking", "thinking": "t"}]}]),
+                "thinking content blocks are only supported in assistant history",
+            ),
+            (
+                _payload(messages, system=[{"type": "thinking", "thinking": "t"}]),
+                "thinking content blocks are only supported in assistant history",
+            ),
+            (
+                _payload(
+                    [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "t",
+                                    "content": [{"type": "thinking", "thinking": "t"}],
+                                }
+                            ],
+                        }
+                    ]
+                ),
+                "thinking content blocks are only supported in assistant history",
             ),
             (
                 _payload([{"role": "assistant", "content": [{"type": "redacted_thinking", "data": "x"}]}]),
-                "thinking content blocks are not supported by this endpoint",
+                "redacted_thinking content blocks are not supported by this endpoint",
             ),
             (
                 _payload(
@@ -573,7 +749,12 @@ class TestAnthropicRoute:
 
     def test_backend_failure_maps_to_anthropic_error_without_record(self, anthropic_env):
         session_id = _create_session(anthropic_env.url)
-        resp = _post_messages(anthropic_env.url, session_id, _payload([{"role": "user", "content": "RAISE"}]))
+
+        async def reject(self, request, compute_fn):
+            return JSONResponse(content={"error": "mock backend failure"}, status_code=500)
+
+        with patch.object(MockSGLangServer, "_handle_generate_like_request", new=reject):
+            resp = _post_messages(anthropic_env.url, session_id, _payload([{"role": "user", "content": "hello"}]))
         assert resp.status_code == 500
         body = resp.json()
         assert body["type"] == "error" and body["error"]["type"] == "api_error"

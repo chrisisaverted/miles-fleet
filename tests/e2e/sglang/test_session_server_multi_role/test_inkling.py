@@ -21,6 +21,7 @@ CONFIG = ModelConfig(
     cycles=2,
     n_samples_per_prompt=1,
     tool_call_failure_mode="append_tool",
+    anthropic_intermediate_system_expectation="required",
 )
 
 

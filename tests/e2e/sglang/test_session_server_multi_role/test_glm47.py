@@ -19,6 +19,7 @@ CONFIG = ModelConfig(
     # preceding assistant carries a matching tool_call.id, so the APPEND_TOOL
     # sentinel ("tool_call_id": "none") roundtrips cleanly.
     tool_call_failure_mode="append_tool",
+    anthropic_intermediate_system_expectation="required",
 )
 
 

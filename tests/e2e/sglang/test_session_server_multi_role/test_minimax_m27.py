@@ -48,6 +48,8 @@ CONFIG = ModelConfig(
     cycles=2,
     assistant_text_threshold=0.1,
     tool_call_failure_mode="append_user",
+    # MiniMax does not reliably honor forced Anthropic tool_use responses.
+    verify_anthropic=False,
 )
 
 

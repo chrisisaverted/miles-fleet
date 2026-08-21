@@ -25,6 +25,7 @@ CONFIG = ModelConfig(
     # order, so a sentinel tool_call_id would not roundtrip; use the
     # universal rollback recovery when the model emits no tool_calls.
     tool_call_failure_mode="rollback",
+    anthropic_intermediate_system_expectation="forbidden",
 )
 
 
