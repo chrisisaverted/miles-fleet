@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 
 import pytest
@@ -217,8 +218,8 @@ def test_zero_devices_disable_sampler(backend):
 
 
 def test_production_auto_detection_falls_back_from_nvml_to_amdsmi(monkeypatch):
-    monkeypatch.setattr(gpu_sampler_module, "_import_nvml", lambda: FakeNvml(fail_init=True))
-    monkeypatch.setattr(gpu_sampler_module, "_import_amdsmi", lambda: FakeAmdSmi(count=1))
+    monkeypatch.setitem(sys.modules, "pynvml", FakeNvml(fail_init=True))
+    monkeypatch.setitem(sys.modules, "amdsmi", FakeAmdSmi(count=1))
 
     sampler = GpuSampler(PushSpy(), node="n")
 
@@ -227,11 +228,11 @@ def test_production_auto_detection_falls_back_from_nvml_to_amdsmi(monkeypatch):
 
 
 def test_explicit_injection_does_not_probe_the_other_backend(monkeypatch):
-    monkeypatch.setattr(
-        gpu_sampler_module,
-        "_import_amdsmi",
-        lambda: pytest.fail("explicit NVML injection must not probe AMD SMI"),
-    )
+    class BoomAmdSmi:
+        def amdsmi_init(self):
+            pytest.fail("explicit NVML injection must not probe AMD SMI")
+
+    monkeypatch.setitem(sys.modules, "amdsmi", BoomAmdSmi())
 
     sampler = GpuSampler(PushSpy(), node="n", nvml=FakeNvml(fail_init=True))
 
@@ -239,14 +240,9 @@ def test_explicit_injection_does_not_probe_the_other_backend(monkeypatch):
 
 
 def test_missing_optional_backends_disable_sampler(monkeypatch, caplog):
-    def missing_nvml():
-        raise ImportError("pynvml is not installed")
-
-    def missing_amdsmi():
-        raise ImportError("amdsmi is not installed")
-
-    monkeypatch.setattr(gpu_sampler_module, "_import_nvml", missing_nvml)
-    monkeypatch.setattr(gpu_sampler_module, "_import_amdsmi", missing_amdsmi)
+    # None in sys.modules makes `import pynvml` raise ImportError, as if absent.
+    monkeypatch.setitem(sys.modules, "pynvml", None)
+    monkeypatch.setitem(sys.modules, "amdsmi", None)
     with caplog.at_level(logging.WARNING):
         sampler = GpuSampler(PushSpy(), node="n")
 

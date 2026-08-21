@@ -18,11 +18,12 @@ the other devices keep reporting.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import threading
 import time
 from collections.abc import Callable
-from typing import ClassVar, Protocol
+from typing import ClassVar
 
 from miles.dashboard.logging_utils import RateLimitedWarner
 from miles.dashboard.store import GpuProcessSample, GpuSample
@@ -30,32 +31,24 @@ from miles.dashboard.store import GpuProcessSample, GpuSample
 logger = logging.getLogger(__name__)
 
 
-class _GpuProvider(Protocol):
-    """Vendor SMI adapter. Returns values in the dashboard's units (util %,
-    VRAM MiB, power W) so the sampler stays vendor-agnostic."""
-
-    name: str
-
-    def initialize(self) -> tuple[list, list[str]]: ...
-
-    def read_device(self, handle) -> tuple[int, int, int]: ...
-
-    def read_processes(self, handle) -> list[tuple[int, str, int]]: ...
-
-
 def _text(value) -> str:
     return value.decode() if isinstance(value, bytes) else str(value)
 
 
+# The two providers adapt one vendor SMI each to the same small interface, in
+# the dashboard's units: initialize() -> (handles, uuids), read_device(handle)
+# -> (util %, mem MiB, power W), read_processes(handle) -> [(pid, name, mem MiB)].
+# Both raise from initialize() when unusable so auto-detection can fall through.
+
+
 class _NvmlProvider:
     name = "NVML"
+    module = "pynvml"
 
     def __init__(self, api):
         self._api = api
 
     def initialize(self) -> tuple[list, list[str]]:
-        """Returns (handles, uuids); raises when NVML is unusable so
-        auto-detection can fall through to the next backend."""
         self._api.nvmlInit()
         count = self._api.nvmlDeviceGetCount()
         if count == 0:
@@ -73,18 +66,17 @@ class _NvmlProvider:
         processes = []
         for proc in self._api.nvmlDeviceGetComputeRunningProcesses(handle):
             pid = int(proc.pid)
-            processes.append((pid, self._process_name(pid), int(proc.usedGpuMemory or 0) >> 20))
+            try:
+                name = _text(self._api.nvmlSystemGetProcessName(pid))
+            except Exception:
+                name = f"pid {pid}"  # process exited between enumeration and lookup, or name unavailable
+            processes.append((pid, name, int(proc.usedGpuMemory or 0) >> 20))
         return processes
-
-    def _process_name(self, pid: int) -> str:
-        try:
-            return _text(self._api.nvmlSystemGetProcessName(pid))
-        except Exception:
-            return f"pid {pid}"  # process exited between enumeration and lookup, or name unavailable
 
 
 class _AmdSmiProvider:
     name = "AMD SMI"
+    module = "amdsmi"
 
     def __init__(self, api):
         self._api = api
@@ -94,11 +86,9 @@ class _AmdSmiProvider:
         handles = self._api.amdsmi_get_processor_handles()
         if not handles:
             raise RuntimeError("no AMD SMI devices")
-        # Keep the SMI slot as the dashboard lane id. Ray numbers the GPU
-        # resources visible to its node in the same sequential space; do not
-        # re-apply HIP/CUDA visibility variables or re-index by KFD id. Note:
-        # partitioned MI300+ devices share one UUID per physical GPU, so the
-        # uuids are not necessarily unique per lane.
+        # Keep the SMI slot as the dashboard lane id — Ray numbers the node's
+        # GPUs in the same order. Partitioned MI300+ cards repeat one UUID per
+        # physical GPU, so uuids are not necessarily unique.
         return list(handles), [_text(self._api.amdsmi_get_gpu_device_uuid(handle)) for handle in handles]
 
     def read_device(self, handle) -> tuple[int, int, int]:
@@ -126,27 +116,14 @@ class _AmdSmiProvider:
 
 
 def _amd_socket_power(power: dict) -> int:
-    # socket_power selects current power on MI300+ and average power on older
-    # cards; older wrappers lack the field entirely. Unavailable sensors show
-    # up as the string "N/A" (ROCm >= 6.1) or a raw integer sentinel (uint16
-    # 0xFFFF on ROCm 6.0, UINT32_MAX from newer C structs).
+    # socket_power reads current power on MI300+ and average power on older
+    # cards; older wrappers only have the split fields. Unavailable sensors
+    # come back as "N/A" (ROCm >= 6.1) or a raw sentinel like 0xFFFF (ROCm 6.0).
     for field in ("socket_power", "current_socket_power", "average_socket_power"):
-        value = power.get(field)
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value < 0xFFFF:
+        value = power.get(field, "N/A")
+        if value != "N/A" and 0 <= value < 0xFFFF:
             return int(value)
     raise ValueError(f"AMD SMI socket power unavailable: {power!r}")
-
-
-def _import_nvml():
-    import pynvml
-
-    return pynvml
-
-
-def _import_amdsmi():
-    import amdsmi
-
-    return amdsmi
 
 
 class GpuSampler:
@@ -172,7 +149,7 @@ class GpuSampler:
         self._push_processes = push_processes
         self.node = node
         self.interval = interval
-        self._provider: _GpuProvider | None = None
+        self._provider = None  # _NvmlProvider or _AmdSmiProvider once initialized
         self._handles: list = []
         self._uuids: list[str] = []
         self._buffer: list[GpuSample] = []
@@ -185,16 +162,16 @@ class GpuSampler:
 
     def _init_provider(self, *, nvml, amdsmi) -> bool:
         if nvml is not None:
-            candidates = [(_NvmlProvider, lambda: nvml)]
+            candidates = [(_NvmlProvider, nvml)]
         elif amdsmi is not None:
-            candidates = [(_AmdSmiProvider, lambda: amdsmi)]
-        else:
-            candidates = [(_NvmlProvider, _import_nvml), (_AmdSmiProvider, _import_amdsmi)]
+            candidates = [(_AmdSmiProvider, amdsmi)]
+        else:  # auto-detect: try NVML first, then AMD SMI
+            candidates = [(_NvmlProvider, None), (_AmdSmiProvider, None)]
 
         failures = []
-        for cls, import_api in candidates:
+        for cls, api in candidates:
             try:
-                provider = cls(import_api())
+                provider = cls(api if api is not None else importlib.import_module(cls.module))
                 self._handles, self._uuids = provider.initialize()
             except Exception as error:
                 failures.append((cls.name, str(error)))
