@@ -341,6 +341,26 @@ def test_session_verify_metrics_hard_mismatch_precedes_soft_threshold(tmp_path):
         assert_session_verify_metrics(str(metrics_path), assistant_text_threshold=0.0)
 
 
+@pytest.mark.parametrize(
+    ("include_clean_sample", "stage", "message", "completed_samples"),
+    [
+        (True, "anthropic_session_verify_agent.generate", "expected six requests", 1),
+        (False, "session_verify_agent.run_agent", "missing rollback", 0),
+    ],
+)
+def test_session_verify_metrics_rejects_verifier_error(
+    tmp_path, include_clean_sample, stage, message, completed_samples
+):
+    metrics_path = tmp_path / "metrics.jsonl"
+    entries = [{"verification_error": {"stage": stage, "type": "AssertionError", "message": message}}]
+    if include_clean_sample:
+        entries.append({"driver_events": ["append_tool"], "had_assistant_mismatch": False})
+    _write_metrics(metrics_path, entries)
+
+    with pytest.raises(AssertionError, match=f"completed_samples={completed_samples}.*{message}"):
+        assert_session_verify_metrics(str(metrics_path), assistant_text_threshold=1.0)
+
+
 def test_session_verify_metrics_keeps_assistant_text_soft(tmp_path):
     metrics_path = tmp_path / "metrics.jsonl"
     _write_metrics(

@@ -302,12 +302,31 @@ def assert_session_verify_metrics(
     hard_mismatch_count = 0
     hard_mismatch_types = set()
     hard_mismatch_example = None
+    verification_error_count = 0
+    verification_error_stages = set()
+    verification_error_example = None
     with open(metrics_path) as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             entry = json.loads(line)
+            if "verification_error" in entry:
+                verification_error_count += 1
+                error = entry["verification_error"]
+                if isinstance(error, dict):
+                    stage = error.get("stage")
+                    if stage:
+                        verification_error_stages.add(stage)
+                    if verification_error_example is None:
+                        verification_error_example = {
+                            "stage": stage,
+                            "type": error.get("type"),
+                            "message": str(error.get("message") or "")[:1000],
+                        }
+                elif verification_error_example is None:
+                    verification_error_example = str(error)[:1000]
+                continue
             total_samples += 1
             has_append_tool = has_append_tool or "append_tool" in entry.get("driver_events", [])
             if entry.get("had_assistant_mismatch"):
@@ -328,6 +347,14 @@ def assert_session_verify_metrics(
                         }
                     elif entry_example is not None:
                         hard_mismatch_example = str(entry_example)[:500]
+
+    if verification_error_count:
+        raise AssertionError(
+            "Session multi-role e2e: verifier assertions failed in "
+            f"{verification_error_count} attempted trajectories "
+            f"(completed_samples={total_samples}, stages={sorted(verification_error_stages)}, "
+            f"first={verification_error_example})."
+        )
 
     if total_samples == 0:
         raise AssertionError(

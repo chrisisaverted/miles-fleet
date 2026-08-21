@@ -198,7 +198,8 @@ def test_run_agent_runs_six_turns_and_checks_canonical_records(
     second_result = posted[3][1]["messages"][-1]["content"][0]
     assert second_result["content"][0]["type"] == "text"
     third_result = posted[5][1]["messages"][-1]["content"][0]
-    assert third_result["is_error"] is True
+    assert third_result["content"] == anthropic_session_verify_agent._TOOL_RECOVERY_TEXT
+    assert "is_error" not in third_result
     tail_roles = [message["role"] for message in posted[4][1]["messages"][-2:]]
     assert ("system" in tail_roles) is include_system
     assert posted[4][1]["messages"][-1]["content"][0]["type"] == "text"
@@ -212,9 +213,8 @@ def test_run_agent_runs_six_turns_and_checks_canonical_records(
         "tool_use_count": 3,
         "tool_result_count": 3,
         "text_turn_count": 3,
-        "tool_result_string_count": 1,
+        "tool_result_string_count": 2,
         "tool_result_list_count": 1,
-        "tool_result_error_count": 1,
         "intermediate_system_used": include_system,
     }
 
@@ -228,9 +228,8 @@ def _successful_sample() -> Sample:
             "tool_use_count": 3,
             "tool_result_count": 3,
             "text_turn_count": 3,
-            "tool_result_string_count": 1,
+            "tool_result_string_count": 2,
             "tool_result_list_count": 1,
-            "tool_result_error_count": 1,
             "intermediate_system_used": True,
             "leaf": {"path_node_ids": [0, 1, 2, 3, 4, 5]},
             "tito_session_mismatch": [],
@@ -309,7 +308,9 @@ def test_generate_records_hard_mismatch_without_dropping_sample(monkeypatch, tmp
     assert metric["hard_mismatch_example"]["segment_index"] == 4
 
 
-def test_generate_rejects_stale_single_turn_metadata(monkeypatch):
+def test_generate_journals_stale_single_turn_metadata(monkeypatch, tmp_path):
+    metrics_path = tmp_path / "metrics.jsonl"
+    monkeypatch.setenv("MILES_SESSION_VERIFY_METRICS_PATH", str(metrics_path))
     sample = _successful_sample()
     sample.metadata["request_count"] = 1
 
@@ -328,6 +329,10 @@ def test_generate_rejects_stale_single_turn_metadata(monkeypatch):
 
     with pytest.raises(AssertionError, match="request_count=1, expected 6"):
         asyncio.run(anthropic_session_verify_agent.generate(input_value))
+
+    sample_record, error_record = [json.loads(line) for line in metrics_path.read_text().splitlines()]
+    assert sample_record["hard_mismatch_count"] == 0
+    assert error_record["verification_error"]["stage"] == "anthropic_session_verify_agent.generate"
 
 
 @pytest.mark.parametrize(
@@ -351,8 +356,11 @@ def test_intermediate_system_family_gate(tito_model, route_supports, expected):
     [("qwen3", False, "required"), ("qwen35", True, "required")],
 )
 def test_run_agent_rejects_intermediate_system_capability_drift_before_post(
-    monkeypatch, tito_model, route_supports, expectation
+    monkeypatch, tmp_path, tito_model, route_supports, expectation
 ):
+    metrics_path = tmp_path / "metrics.jsonl"
+    monkeypatch.setenv("MILES_SESSION_VERIFY_METRICS_PATH", str(metrics_path))
+
     class FakeAsyncClient:
         def __init__(self, *, timeout):
             assert timeout == 180
@@ -385,6 +393,9 @@ def test_run_agent_rejects_intermediate_system_capability_drift_before_post(
                 },
             )
         )
+
+    [record] = [json.loads(line) for line in metrics_path.read_text().splitlines()]
+    assert record["verification_error"]["stage"] == "anthropic_session_verify_agent.run_agent"
 
 
 @pytest.mark.parametrize("tito_model", ["minimax_m25", "minimax_m27"])

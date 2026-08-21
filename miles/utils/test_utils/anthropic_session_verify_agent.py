@@ -18,6 +18,7 @@ from miles.utils.test_utils.session_verify_agent import (
     SYSTEM_REMINDER_TEXT,
     TOOLS,
     USER_FOLLOWUP_TEXT,
+    _journal_verifier_assertions,
     _verify_tito_samples,
     fixed_template_append_roles,
 )
@@ -46,11 +47,11 @@ _MINIMAX_TITO_MODELS = frozenset(
         TITOTokenizerType.MINIMAX_M27.value,
     }
 )
-_TOOL_ERROR_TEXT = "The weather service is temporarily unavailable."
+_TOOL_RECOVERY_TEXT = "The weather service is temporarily unavailable."
 _TOOL_RESULT_EVENTS = (
     "anthropic_tool_result_string",
     "anthropic_tool_result_list",
-    "anthropic_tool_result_error",
+    "anthropic_tool_result_string",
 )
 _INTERMEDIATE_SYSTEM_EXPECTATIONS = frozenset({"required", "forbidden"})
 
@@ -100,15 +101,12 @@ def _build_tool_result(tool_use: dict, turn_index: int) -> dict:
     result_text = MOCK_TOOL_RESULTS[turn_index % len(MOCK_TOOL_RESULTS)]
     content = [{"type": "text", "text": result_text}] if turn_index == 1 else result_text
     if turn_index == 2:
-        content = _TOOL_ERROR_TEXT
-    result = {
+        content = _TOOL_RECOVERY_TEXT
+    return {
         "type": "tool_result",
         "tool_use_id": tool_use["id"],
         "content": content,
     }
-    if turn_index == 2:
-        result["is_error"] = True
-    return result
 
 
 def _expected_driver_events(*, include_system: bool) -> list[str]:
@@ -120,6 +118,7 @@ def _expected_driver_events(*, include_system: bool) -> list[str]:
     return events
 
 
+@_journal_verifier_assertions("anthropic_session_verify_agent.run_agent")
 async def run_agent(base_url, prompt, request_kwargs, metadata, **kwargs):
     """Run three tool-use/result/text cycles and verify their canonical records."""
     tito_model = metadata["tito_model"]
@@ -193,9 +192,8 @@ async def run_agent(base_url, prompt, request_kwargs, metadata, **kwargs):
         "tool_use_count": tool_use_count,
         "tool_result_count": tool_use_count,
         "text_turn_count": len(_TOOL_PROMPTS),
-        "tool_result_string_count": 1,
+        "tool_result_string_count": 2,
         "tool_result_list_count": 1,
-        "tool_result_error_count": 1,
         "intermediate_system_used": include_system,
     }
 
@@ -236,7 +234,7 @@ def _assert_canonical_records(snapshot: dict, tool_uses_per_turn: list[list[dict
         assert record["path"] == "/v1/chat/completions"
         assert record["request"]["input_ids"]
     max_trim_tokens = snapshot["metadata"]["max_trim_tokens"]
-    for previous, current in zip(records, records[1:]):
+    for previous, current in zip(records, records[1:], strict=False):
         previous_choice = previous["response"]["choices"][0]
         completion_ids = [item[1] for item in previous_choice["meta_info"]["output_token_logprobs"]]
         previous_ids = previous["request"]["input_ids"] + completion_ids
@@ -283,6 +281,7 @@ def _assert_canonical_records(snapshot: dict, tool_uses_per_turn: list[list[dict
     assert snapshot["metadata"]["accumulated_token_ids"] == records[-1]["request"]["input_ids"] + last_completion_ids
 
 
+@_journal_verifier_assertions("anthropic_session_verify_agent.generate")
 async def generate(input: GenerateFnInput) -> GenerateFnOutput:
     """Run the Anthropic agent, check hard TITO mismatches, and write metrics."""
     tito_model = input.args.tito_model
@@ -294,9 +293,11 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
     output = await _base_generate(input)
 
     samples = output.samples if isinstance(output.samples, list) else [output.samples]
+    events_per_sample = [sample.metadata.get("driver_events", []) for sample in samples]
+    allowed_roles = list(fixed_template_append_roles(tito_model))
+    _verify_tito_samples(samples, events_per_sample, allowed_roles=allowed_roles)
     if len(samples) != 1:
         raise AssertionError(f"Anthropic per-model e2e: expected one linear sample, got {len(samples)}")
-    events_per_sample = [sample.metadata.get("driver_events", []) for sample in samples]
     include_system = samples[0].metadata.get("intermediate_system_used")
     if type(include_system) is not bool:
         raise AssertionError("Anthropic per-model e2e: missing intermediate-system capability result")
@@ -309,9 +310,8 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
         "tool_use_count": len(_TOOL_PROMPTS),
         "tool_result_count": len(_TOOL_PROMPTS),
         "text_turn_count": len(_TOOL_PROMPTS),
-        "tool_result_string_count": 1,
+        "tool_result_string_count": 2,
         "tool_result_list_count": 1,
-        "tool_result_error_count": 1,
     }
     for i, sample in enumerate(samples):
         if sample.metadata.get("endpoint") != "anthropic":
@@ -329,8 +329,6 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
         if sample.metadata.get("leaf", {}).get("path_node_ids") != list(range(_REQUEST_COUNT)):
             raise AssertionError(f"Anthropic per-model e2e: sample {i} did not retain the linear six-turn leaf")
 
-    allowed_roles = list(fixed_template_append_roles(tito_model))
-    _verify_tito_samples(samples, events_per_sample, allowed_roles=allowed_roles)
     logger.info("Anthropic endpoint verified: samples=%d, requests_per_sample=%d", len(samples), _REQUEST_COUNT)
     return output
 

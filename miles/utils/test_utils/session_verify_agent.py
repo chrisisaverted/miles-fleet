@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from enum import Enum
+from functools import wraps
 
 try:
     from enum import StrEnum
@@ -26,6 +27,48 @@ from miles.utils.chat_template_utils.tito_tokenizer import VALID_APPEND_ROLES, T
 from miles.utils.test_utils.openai_stream_client import stream_chat_completions
 
 logger = logging.getLogger(__name__)
+
+
+def _append_session_verify_record(entry: dict) -> bool:
+    metrics_path = os.environ.get("MILES_SESSION_VERIFY_METRICS_PATH")
+    if not metrics_path:
+        return False
+    payload = (json.dumps(entry) + "\n").encode()
+    fd = os.open(
+        metrics_path,
+        os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0),
+        0o600,
+    )
+    try:
+        written = os.write(fd, payload)
+        if written != len(payload):
+            raise OSError(f"short metrics sidecar write: expected {len(payload)} bytes, wrote {written}")
+    finally:
+        os.close(fd)
+    return True
+
+
+def _journal_verifier_assertions(stage: str):
+    def decorate(func):
+        @wraps(func)
+        async def wrapped(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except AssertionError as exc:
+                _append_session_verify_record(
+                    {
+                        "verification_error": {
+                            "stage": stage,
+                            "type": type(exc).__name__,
+                            "message": str(exc)[:1000],
+                        }
+                    }
+                )
+                raise
+
+        return wrapped
+
+    return decorate
 
 
 class DriverAction(Enum):
@@ -203,6 +246,7 @@ async def _chat(client, base_url, messages, request_kwargs, *, label):
     return resp.json()
 
 
+@_journal_verifier_assertions("session_verify_agent.run_agent")
 async def run_agent(base_url, prompt, request_kwargs, metadata, **kwargs):
     """Custom-agent entry point.  Returns ``{"driver_events": [...], **counters}``.
 
@@ -415,18 +459,7 @@ def _verify_tito_samples(samples, events_per_sample, *, allowed_roles) -> None:
                 "hard_mismatch_types": sorted({m.get("type") for m in forbidden}),
                 "hard_mismatch_example": hard_example,
             }
-            payload = (json.dumps(entry) + "\n").encode()
-            fd = os.open(
-                metrics_path,
-                os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0),
-                0o600,
-            )
-            try:
-                written = os.write(fd, payload)
-                if written != len(payload):
-                    raise OSError(f"short metrics sidecar write: expected {len(payload)} bytes, wrote {written}")
-            finally:
-                os.close(fd)
+            _append_session_verify_record(entry)
         elif forbidden:
             raise AssertionError(
                 f"Session multi-role e2e: sample {i} has forbidden mismatches "
@@ -435,6 +468,7 @@ def _verify_tito_samples(samples, events_per_sample, *, allowed_roles) -> None:
             )
 
 
+@_journal_verifier_assertions("session_verify_agent.generate")
 async def generate(input: GenerateFnInput) -> GenerateFnOutput:
     """Custom-generate wrapper that asserts driver-action coverage.
 
@@ -458,6 +492,10 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
     events_per_sample = [s.metadata.get("driver_events", []) for s in samples]
     metrics_path = os.environ.get("MILES_SESSION_VERIFY_METRICS_PATH")
 
+    if not samples:
+        raise AssertionError("Session multi-role e2e: generate returned no samples")
+    _verify_tito_samples(samples, events_per_sample, allowed_roles=allowed_roles)
+
     required_per_sample = ["rollback"]
     if "user" in allowed_roles:
         required_per_sample.append("append_user")
@@ -480,7 +518,6 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
             f"the model may not be tool-calling.  events_per_sample={events_per_sample}"
         )
 
-    _verify_tito_samples(samples, events_per_sample, allowed_roles=allowed_roles)
     logger.info(
         "Multi-role coverage verified: per_sample=%s, samples=%d, events=%s",
         required_per_sample,

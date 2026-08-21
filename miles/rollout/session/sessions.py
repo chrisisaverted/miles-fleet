@@ -83,6 +83,8 @@ def _validate_anthropic_content_block(block, *, allow_thinking: bool = False) ->
         raise ValueError("tool_reference content blocks are not enabled for this deployment")
     if block.type == "search_result":
         raise ValueError("search_result content blocks are not enabled for this deployment")
+    if block.type == "tool_result" and block.is_error is True:
+        raise ValueError("tool_result is_error=true is not supported by this endpoint")
 
 
 def _validate_anthropic_features(request: AnthropicMessagesRequest) -> None:
@@ -274,14 +276,18 @@ def setup_session_routes(app, backend, args, *, use_addition_r3: bool = False):
         try:
             openai_response = ChatCompletionResponse.model_validate_json(core_response.body)
             if anthropic_stream:
-                events = anthropic_utils.to_anthropic_fake_sse_events(openai_response, model=anthropic_request.model)
+                events = anthropic_utils.to_anthropic_fake_sse_events(
+                    openai_response,
+                    model=anthropic_request.model,
+                    id_factory=lambda: openai_response.id,
+                )
                 return Response(
                     content=_anthropic_sse_body(events),
                     status_code=200,
                     headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
                     media_type="text/event-stream",
                 )
-            envelope = convert_response(openai_response)
+            envelope = convert_response(openai_response).model_copy(update={"id": openai_response.id})
             return Response(content=_anthropic_wire_json(envelope), status_code=200, media_type=JSON_MEDIA_TYPE)
         except Exception:
             # Post-commit failures keep the record and return JSON 500, never partial SSE.

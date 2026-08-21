@@ -132,16 +132,19 @@ class TestAnthropicRoute:
         assert resp.headers["content-type"].startswith("application/json")
         body = resp.json()
         assert body["type"] == "message" and body["role"] == "assistant"
-        assert body["id"].startswith("msg_")
         # Non-stream JSON keeps the backend response model (frozen behavior).
         assert body["model"] == "mock-model"
         assert body["content"] == [{"type": "text", "text": "anthropic-echo"}]
         assert body["stop_reason"] == "end_turn"
         assert body["usage"]["input_tokens"] > 0 and body["usage"]["output_tokens"] > 0
 
-        records = _records(anthropic_env.url, session_id)
+        snapshot = requests.get(f"{anthropic_env.url}/sessions/{session_id}", timeout=5.0).json()
+        records = snapshot["records"]
         assert len(records) == 1
         record = records[0]
+        assert body["id"] == record["response"]["id"]
+        if anthropic_env.version == "v2":
+            assert body["id"] == snapshot["metadata"]["tree"]["nodes"][0]["response_id"]
         assert record["path"] == "/v1/chat/completions"
         assert record["request"]["messages"] == [
             {"role": "system", "content": "sys"},
@@ -322,7 +325,11 @@ class TestAnthropicRoute:
         assert events[2][1]["delta"] == {"type": "text_delta", "text": "anthropic-echo"}
         assert events[4][1]["delta"]["stop_reason"] == "end_turn"
         assert events[4][1]["usage"]["output_tokens"] > 0
-        assert len(_records(anthropic_env.url, session_id)) == 1
+        snapshot = requests.get(f"{anthropic_env.url}/sessions/{session_id}", timeout=5.0).json()
+        [record] = snapshot["records"]
+        assert message_start["id"] == record["response"]["id"]
+        if anthropic_env.version == "v2":
+            assert message_start["id"] == snapshot["metadata"]["tree"]["nodes"][0]["response_id"]
 
     def test_parity_with_equivalent_openai_request(self, anthropic_env):
         anthropic_session = _create_session(anthropic_env.url)
@@ -547,6 +554,24 @@ class TestAnthropicRoute:
             (
                 _payload([{"role": "user", "content": [{"type": "search_result", "title": "t"}]}]),
                 "search_result content blocks are not enabled for this deployment",
+            ),
+            (
+                _payload(
+                    [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "t",
+                                    "content": "failed",
+                                    "is_error": True,
+                                }
+                            ],
+                        }
+                    ]
+                ),
+                "tool_result is_error=true is not supported by this endpoint",
             ),
             (
                 _payload(

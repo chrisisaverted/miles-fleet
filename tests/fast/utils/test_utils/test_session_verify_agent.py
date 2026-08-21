@@ -257,3 +257,54 @@ def test_hard_mismatch_still_raises_without_metrics_sidecar(monkeypatch):
             [sample.metadata["driver_events"]],
             allowed_roles=list(VALID_APPEND_ROLES),
         )
+
+
+def test_run_agent_journals_assertion_before_retry(monkeypatch, tmp_path):
+    metrics_path = tmp_path / "metrics.jsonl"
+    monkeypatch.setenv("MILES_SESSION_VERIFY_METRICS_PATH", str(metrics_path))
+
+    def reject_template(_tito_model):
+        raise AssertionError("journal me")
+
+    monkeypatch.setattr(session_verify_agent, "fixed_template_append_roles", reject_template)
+
+    with pytest.raises(AssertionError, match="journal me"):
+        asyncio.run(
+            run_agent(
+                "http://session",
+                prompt=None,
+                request_kwargs={},
+                metadata={"tito_model": "qwen3"},
+            )
+        )
+
+    [record] = [json.loads(line) for line in metrics_path.read_text().splitlines()]
+    assert record["verification_error"]["stage"] == "session_verify_agent.run_agent"
+    assert record["verification_error"]["message"] == "journal me"
+
+
+def test_generate_journals_coverage_failure_after_hard_mismatch(monkeypatch, tmp_path):
+    metrics_path = tmp_path / "metrics.jsonl"
+    monkeypatch.setenv("MILES_SESSION_VERIFY_METRICS_PATH", str(metrics_path))
+    sample = _qwen3_verified_sample([{"type": "special_token_count", "detail": "count differs"}])
+    sample.metadata["driver_events"].remove("rollback")
+
+    async def fake_base_generate(input):
+        return GenerateFnOutput(samples=[sample])
+
+    monkeypatch.setattr(session_verify_agent, "_base_generate", fake_base_generate)
+    input_value = SimpleNamespace(
+        sample=Sample(),
+        args=SimpleNamespace(
+            tito_model="qwen3",
+            session_verify_cycles=3,
+            tool_call_failure_mode="rollback",
+        ),
+    )
+
+    with pytest.raises(AssertionError, match="missing required driver events"):
+        asyncio.run(session_verify_agent.generate(input_value))
+
+    sample_record, error_record = [json.loads(line) for line in metrics_path.read_text().splitlines()]
+    assert sample_record["hard_mismatch_count"] == 1
+    assert error_record["verification_error"]["stage"] == "session_verify_agent.generate"
