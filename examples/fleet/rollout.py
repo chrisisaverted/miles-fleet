@@ -397,6 +397,19 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
         for segment in segments:
             segment.sample.status = Sample.Status.ABORTED
         raise
+    except Exception as e:
+        # An episode must never kill the run. Env prepare failures (an image
+        # exceeding its own declared readiness budget on a loaded node killed
+        # a 12h run on 2026-08-22), engine errors, or template drift become an
+        # ABORTED write-off; the check_no_aborted filter rejects the group and
+        # over-sampling replaces it.
+        logger.warning("[%s] episode failed, writing off as ABORTED: %s", task_key, e)
+        samples = [s.sample for s in segments] or [base_sample]
+        for sample in samples:
+            sample.status = Sample.Status.ABORTED
+            sample.metadata = dict(sample.metadata or {})
+            sample.metadata["episode_error"] = str(e)[:300]
+        return GenerateFnOutput(samples=samples[0] if len(samples) == 1 else samples)
     finally:
         # Shielded so a cancelled episode still reaps its containers.
         try:

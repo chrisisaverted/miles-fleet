@@ -312,15 +312,16 @@ def test_episode_timeout_still_grades(monkeypatch):
     assert session.closed
 
 
-def test_close_runs_when_grade_raises(monkeypatch):
+def test_grade_raising_writes_off_and_closes(monkeypatch):
     session = FakeFleetSession()
 
     def broken(answer, reset_ack=None, close_final_step=False):
         raise RuntimeError("boom")
 
     session.grade = broken
-    with pytest.raises(RuntimeError, match="boom"):
-        run_generate(monkeypatch, session, [SUBMIT])
+    sample = run_generate(monkeypatch, session, [SUBMIT])
+    assert sample.status == Sample.Status.ABORTED
+    assert "boom" in sample.metadata["episode_error"]
     assert session.closed
 
 
@@ -395,3 +396,20 @@ def test_multistep_submit_on_final_step_grades(monkeypatch):
     sample = run_generate(monkeypatch, session, [SUBMIT])
     assert sample.metadata["done_reason"] == "submitted"
     assert session.graded_with == ("42", None, True)
+
+
+def test_env_prepare_failure_writes_off_not_raises(monkeypatch):
+    """An env that cannot become ready must not kill the run (a readiness
+    failure killed a 12h job on 2026-08-22): the episode returns an ABORTED
+    sample for check_no_aborted to reject."""
+    session = FakeFleetSession()
+
+    def broken_open():
+        raise RuntimeError("prepare failed after 3 attempts: health endpoint was not ready")
+
+    session.open = broken_open
+    sample = run_generate(monkeypatch, session, [])
+    assert sample.status == Sample.Status.ABORTED
+    assert "prepare failed" in sample.metadata["episode_error"]
+    assert session.closed
+    assert session.graded_with is None
