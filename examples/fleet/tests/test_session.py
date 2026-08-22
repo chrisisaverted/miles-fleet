@@ -306,7 +306,8 @@ def test_tool_budget_drops_whole_schemas():
 
 
 def test_prepare_retries_transient_failures(monkeypatch):
-    monkeypatch.setattr(session_mod, "PREPARE_BACKOFF_S", 0.0)
+    monkeypatch.setattr(session_mod, "PREPARE_BACKOFF_BASE_S", 0.0)
+    monkeypatch.setattr(session_mod, "PREPARE_ATTEMPTS", 3)
     calls = {"n": 0}
 
     class FlakyRuntime:
@@ -321,7 +322,8 @@ def test_prepare_retries_transient_failures(monkeypatch):
 
 
 def test_prepare_gives_up_with_cause(monkeypatch):
-    monkeypatch.setattr(session_mod, "PREPARE_BACKOFF_S", 0.0)
+    monkeypatch.setattr(session_mod, "PREPARE_BACKOFF_BASE_S", 0.0)
+    monkeypatch.setattr(session_mod, "PREPARE_ATTEMPTS", 3)
 
     class DeadRuntime:
         def prepare(self, task, source):

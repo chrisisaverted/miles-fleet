@@ -137,6 +137,7 @@ def make_args(**overrides) -> Namespace:
         fleet_max_turns=8,
         fleet_max_tokens_per_turn=64,
         fleet_max_concurrent_envs=4,
+        fleet_max_concurrent_prepares=2,
         fleet_episode_timeout_s=30.0,
         fleet_runtime_root=None,
         fleet_partial_reward=False,
@@ -194,6 +195,7 @@ def run_generate(monkeypatch, session: FakeFleetSession, script: List[Any], args
     monkeypatch.setattr(rollout_mod, "post", make_post(script, state.tokenizer))
     monkeypatch.setattr(rollout_mod, "_SWEPT", True)
     monkeypatch.setattr(rollout_mod, "_ENV_SEMAPHORE", None)
+    monkeypatch.setattr(rollout_mod, "_PREPARE_SEMAPHORE", None)
     monkeypatch.setattr(rollout_mod, "_tito_for", lambda state_, args_: FakeTito(state_.tokenizer))
     sample = Sample(prompt=[{"role": "user", "content": "row prompt"}], metadata={"taskset_ref": "ts", "task_key": "t1"})
     fn_input = GenerateFnInput(state=state, sample=sample, sampling_params={"max_new_tokens": 64}, evaluation=False)
@@ -330,6 +332,7 @@ def test_missing_identity_raises(monkeypatch):
     state = StubState(args)
     monkeypatch.setattr(rollout_mod, "_SWEPT", True)
     monkeypatch.setattr(rollout_mod, "_ENV_SEMAPHORE", None)
+    monkeypatch.setattr(rollout_mod, "_PREPARE_SEMAPHORE", None)
     sample = Sample(prompt=[], metadata={})
     fn_input = GenerateFnInput(state=state, sample=sample, sampling_params={}, evaluation=False)
     with pytest.raises(ValueError, match="taskset_ref"):

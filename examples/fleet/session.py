@@ -58,8 +58,26 @@ TOOLS_JSON_MAX_CHARS = 48000
 CALL_TOOL_TIMEOUT_S = 300
 GRADE_TIMEOUT_S = 900  # grade_session seals + runs every verifier; minutes are normal
 
-PREPARE_ATTEMPTS = 3
-PREPARE_BACKOFF_S = 5.0
+# Prepare retries spread over ~6 minutes of backoff: readiness failures
+# cluster inside multi-minute node-load windows (measured: a sibling job's
+# 32-minute SFS checkpoint save), so a 15s total backoff never outlives one.
+PREPARE_ATTEMPTS = 6
+PREPARE_BACKOFF_BASE_S = 15.0
+PREPARE_BACKOFF_CAP_S = 120.0
+
+# The SDK's default 180s readiness budget (shared sequentially across health
+# endpoints + MCP discovery) is too small for ~15-service desktop envs under
+# node load; no taskset in the registry declares its own budget and the SDK's
+# only knob can merely lower it. The constant is bound into the docker
+# driver's module globals at import and read at DockerEnvironment
+# construction, so patching that namespace raises the effective default.
+READINESS_BUDGET_S = 600.0
+try:
+    import fleet_runtime.drivers.environment.docker.environment as _fleet_docker_env
+
+    _fleet_docker_env.DEFAULT_ENVIRONMENT_STARTUP_BUDGET_SEC = READINESS_BUDGET_S
+except ImportError:  # SDK absent: nothing can run envs anyway
+    pass
 
 
 @dataclass(frozen=True)
@@ -115,7 +133,7 @@ def _prepare_with_retry(runtime, task, source, task_key: str):
             last_err = e
             logger.warning("[%s] prepare attempt %d/%d failed: %s", task_key, attempt, PREPARE_ATTEMPTS, e)
             if attempt < PREPARE_ATTEMPTS:
-                time.sleep(PREPARE_BACKOFF_S * attempt)
+                time.sleep(min(PREPARE_BACKOFF_CAP_S, PREPARE_BACKOFF_BASE_S * 2 ** (attempt - 1)))
     raise RuntimeError(f"[{task_key}] prepare failed after {PREPARE_ATTEMPTS} attempts") from last_err
 
 

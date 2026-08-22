@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
 
 _SWEPT = False
 _ENV_SEMAPHORE: Optional[asyncio.Semaphore] = None
+_PREPARE_SEMAPHORE: Optional[asyncio.Semaphore] = None
 _TITO_CACHE: Dict[str, Any] = {}
 
 
@@ -81,6 +82,17 @@ def _env_semaphore(args) -> asyncio.Semaphore:
     if _ENV_SEMAPHORE is None:
         _ENV_SEMAPHORE = asyncio.Semaphore(args.fleet_max_concurrent_envs)
     return _ENV_SEMAPHORE
+
+
+def _prepare_semaphore(args) -> asyncio.Semaphore:
+    """Bounds concurrent env COLD BOOTS separately from running episodes:
+    eight desktop stacks booting at once starve each other past their
+    readiness budgets, while eight already-running episodes are cheap. Queue
+    time here does not eat the episode wall clock (open precedes wait_for)."""
+    global _PREPARE_SEMAPHORE
+    if _PREPARE_SEMAPHORE is None:
+        _PREPARE_SEMAPHORE = asyncio.Semaphore(args.fleet_max_concurrent_prepares)
+    return _PREPARE_SEMAPHORE
 
 
 def _tito_for(state, args):
@@ -364,7 +376,8 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
                 return GenerateFnOutput(samples=base_sample)
 
             t0 = time.time()
-            await asyncio.to_thread(session.open)
+            async with _prepare_semaphore(args):
+                await asyncio.to_thread(session.open)
             stats.env_time += time.time() - t0
 
             tito = _tito_for(state, args)
@@ -452,6 +465,12 @@ def _add_arguments(parser: argparse.ArgumentParser):
         help="per-turn generation cap; the context cap is --rollout-max-context-len",
     )
     parser.add_argument("--fleet-max-concurrent-envs", type=int, default=8)
+    parser.add_argument(
+        "--fleet-max-concurrent-prepares",
+        type=int,
+        default=3,
+        help="env cold boots in flight; episodes queue here without burning their wall clock",
+    )
     parser.add_argument("--fleet-episode-timeout-s", type=float, default=2400.0)
     parser.add_argument("--fleet-runtime-root", type=str, default=None)
     parser.add_argument("--fleet-partial-reward", action="store_true")

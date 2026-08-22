@@ -80,6 +80,11 @@ def execute(args: ScriptArgs):
         f"--save {load_save_path} "
         f"--save-interval {2 if debug else 20} "
         f"--save-retain-interval {2 if debug else 20} "
+        # Async save overlaps the SFS write with training (e2e-tested pair in
+        # tests/e2e/ckpt): a synchronous 30-minute save both stalls this run
+        # and starves co-located env boots (measured 2026-08-22).
+        "--async-save "
+        "--use-persistent-ckpt-worker "
     )
 
     fleet_args = (
