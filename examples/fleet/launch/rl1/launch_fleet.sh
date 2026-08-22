@@ -27,10 +27,12 @@ export N_SAMPLES="${N_SAMPLES:-8}"
 export MAX_TURNS="${MAX_TURNS:-32}"
 export CONCURRENCY="${CONCURRENCY:-8}"
 export TASK_LIMIT="${TASK_LIMIT:-0}"
-# Host RAM: CPU-offloaded optimizer for the 30B MoE + sglang host stack.
-# Two concurrent 4-GPU runs must fit the p5en's 2TB together with headroom.
-export MAIN_MEM="${MAIN_MEM:-500Gi}"
-export MAIN_MEM_LIM="${MAIN_MEM_LIM:-800Gi}"
+# Host RAM: checkpoint save is the peak (4x MegatronTrainRayActor.save_model
+# at ~185GB RSS each, measured on miles-smoke-ade 2026-08-22; an 800Gi limit
+# OOM-killed at that point). Request sized so two runs fit the 1900Gi flavor
+# quota; the limit rides node-level overcommit for the brief save peak.
+export MAIN_MEM="${MAIN_MEM:-925Gi}"
+export MAIN_MEM_LIM="${MAIN_MEM_LIM:-1300Gi}"
 export SCRIPT_EXTRA="${SCRIPT_EXTRA:-}"
 
 ts_short=$(basename "${TASKSET_REMOTE_REF%%:*}" | tr '[:upper:]' '[:lower:]' | cut -c1-12)
