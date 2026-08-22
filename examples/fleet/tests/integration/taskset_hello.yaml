@@ -1,0 +1,14 @@
+name: fleet-v2-gate1
+tasks:
+  - task_id: hello
+    prompt: Use bash to print hello, then submit hello.
+    environments:
+      app:
+        image_ref: "python@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf"
+        runtime_tools: {bash: {}}
+        expected_tools: [bash]
+        command: ["sleep", "3600"]
+    verifiers:
+      - canonical_id: answer
+        builtin: answer-equals
+        params: {expected: hello}
