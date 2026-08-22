@@ -49,9 +49,14 @@ def main() -> None:
     from fleet_runtime.local import LocalRuntime
     from fleet_runtime.session.session import AttemptSession
 
+    from examples.fleet.session import _image_locators_for
+
     taskset, _ = resolve_source(ref)
     compiled = taskset.select(key)[0]
-    runtime = LocalRuntime()
+    # Same as the training integration: without the image-locations plan the
+    # SDK cannot resolve config digests to the registry images docker holds.
+    locators = _image_locators_for(getattr(taskset, "root_digest", ""), None)
+    runtime = LocalRuntime(image_locators=locators) if locators else LocalRuntime()
     runtime.load_blobs(tuple(compiled.blobs))
     print(f"[repro] preparing {key} (env boot; up to several minutes)...")
     t0 = time.time()
