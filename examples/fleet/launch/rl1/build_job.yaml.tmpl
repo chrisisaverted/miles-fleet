@@ -17,9 +17,12 @@ spec:
       labels: {app: img-build}
     spec:
       restartPolicy: Never
-      nodeSelector: {workload: builder}
+      # The H200 node, not the builder: this image unpacks to well over the
+      # builder's ~94GB ephemeral (evicted at 19 min on 2026-08-21); the p5en
+      # has ~480GB. Builds are rare and the dind storage dies with the pod.
+      nodeSelector: {workload: gpu-h200}
       tolerations:
-        - {key: workload, operator: Equal, value: builder, effect: NoSchedule}
+        - {key: workload, operator: Exists, effect: NoSchedule}
       volumes:
         - {name: dind-storage, emptyDir: {}}
       initContainers:
