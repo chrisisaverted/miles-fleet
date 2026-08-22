@@ -21,7 +21,7 @@ export TASKSET_REMOTE_REF="${2:-registry-alpha.fleetai.me/library/ade-bench:late
 export MODE="${3:-normal}"
 export IMAGE="ghcr.io/fleet-ai/miles-fleet/trainer:${TAG}"
 
-export NUM_GPUS="${NUM_GPUS:-4}"
+export NUM_GPUS="${NUM_GPUS:-8}"  # full-node default; override for splits
 export ROLLOUT_BATCH="${ROLLOUT_BATCH:-8}"
 export N_SAMPLES="${N_SAMPLES:-8}"
 export MAX_TURNS="${MAX_TURNS:-32}"
