@@ -98,3 +98,39 @@ def test_glm_grammar_no_args():
 def test_glm_grammar_zero_arg_call():
     call = parse_tool_call("<tool_call>app__list\n</tool_call>")
     assert call == {"name": "app__list", "arguments": {}}
+
+
+# GLM-4.7 inline grammar (observed on zai-org/GLM-4.7-Flash rollouts,
+# 2026-08-22): name and arg pairs all on one line inside <tool_call>.
+def test_glm47_inline_call():
+    action = (
+        "I'll explore first.<tool_call>bash<arg_key>command</arg_key>"
+        '<arg_value>find . -type f -name "*.py" | head -20</arg_value></tool_call>'
+    )
+    parsed = parse_tool_call(action)
+    assert parsed == {"name": "bash", "arguments": {"command": 'find . -type f -name "*.py" | head -20'}}
+
+
+def test_glm47_inline_multiple_args():
+    action = (
+        "<tool_call>app__query<arg_key>q</arg_key><arg_value>select 1</arg_value>"
+        "<arg_key>limit</arg_key><arg_value>5</arg_value></tool_call>"
+    )
+    parsed = parse_tool_call(action)
+    assert parsed == {"name": "app__query", "arguments": {"q": "select 1", "limit": 5}}
+
+
+def test_glm47_inline_submit_missing_closing_tag():
+    action = "<tool_call>fleet_submit<arg_key>answer</arg_key><arg_value>42</arg_value>"
+    parsed = parse_tool_call(action)
+    assert parsed == {"name": "fleet_submit", "arguments": {"answer": 42}}
+
+
+def test_glm46_name_on_own_line_still_parses():
+    action = "<tool_call>bash\n<arg_key>command</arg_key>\n<arg_value>ls</arg_value>\n</tool_call>"
+    parsed = parse_tool_call(action)
+    assert parsed == {"name": "bash", "arguments": {"command": "ls"}}
+
+
+def test_glm_prose_in_tags_still_rejected():
+    assert parse_tool_call("<tool_call>let me think about this</tool_call>") is None

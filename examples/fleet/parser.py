@@ -130,17 +130,26 @@ def _parse_xml_function_call(text: str) -> Optional[Dict[str, Any]]:
 
 
 def _parse_glm_call(payload: str) -> Optional[Dict[str, Any]]:
-    """Parse a GLM-4.6-style <tool_call> payload: name line + arg pairs.
+    """Parse a GLM-family <tool_call> payload: name + arg_key/arg_value pairs.
+
+    GLM-4.6 puts the name on its own line; GLM-4.7 emits everything inline
+    (`<tool_call>bash<arg_key>command</arg_key><arg_value>ls</arg_value>`,
+    observed on zai-org/GLM-4.7-Flash 2026-08-22). Both shapes reduce to:
+    the name is whatever precedes the first <arg_key>.
 
     Without <arg_key> pairs the payload is claimed only when it is a single
     name-like token (a zero-argument call); anything else stays unparsed so
     prose inside stray tags still counts as a parse failure.
     """
-    head = payload.strip().split("\n", 1)[0].strip()
+    payload = payload.strip()
+    if "<arg_key>" not in payload:
+        head = payload.split("\n", 1)[0].strip()
+        if head and head == payload and re.fullmatch(r"[\w.\-]+", head):
+            return {"name": head, "arguments": {}}
+        return None
+    head = payload.split("<arg_key>", 1)[0].strip()
     if not head or not re.fullmatch(r"[\w.\-]+", head):
         return None
-    if "<arg_key>" not in payload:
-        return {"name": head, "arguments": {}} if head == payload.strip() else None
     args = {k: _coerce_param(v) for k, v in _GLM_ARG_RE.findall(payload)}
     return {"name": head, "arguments": args}
 
