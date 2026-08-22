@@ -40,6 +40,7 @@ class ScriptArgs(U.ExecuteTrainConfig):
     rollout_num_gpus_per_engine: int | None = None  # None => derive from hardware
     sglang_attention_backend: str | None = None
     skip_prepare: bool = False
+    prepare_only: bool = False
     rollout_batch_size: int = 8
     n_samples_per_prompt: int = 8
     max_turns: int = 32
@@ -209,7 +210,8 @@ def execute(args: ScriptArgs):
 def main(args: ScriptArgs):
     if not args.skip_prepare:
         prepare(args)
-    execute(args)
+    if not args.prepare_only:
+        execute(args)
 
 
 if __name__ == "__main__":
