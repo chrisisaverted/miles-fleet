@@ -13,15 +13,23 @@ kind: Job
 metadata:
   name: ${JOB_NAME}
   namespace: fleet-train-jobs
-  labels: {app: miles-fleet}
+  labels:
+    app: miles-fleet
+    kueue.x-k8s.io/queue-name: training-lq
   annotations:
     fleet.ai/submitted-by: deniz@fleet.so
 spec:
+  suspend: true                      # Kueue unsuspends on admission; an
+                                     # unqueued GPU job here gets preempted by
+                                     # admitted workloads (measured 2026-08-21)
   backoffLimit: 0
   ttlSecondsAfterFinished: 86400
   template:
     metadata:
       labels: {app: miles-fleet, run: "${JOB_NAME}"}
+      annotations:
+        # the GPU ClusterQueue flavor admits only topology-aware pod sets
+        kueue.x-k8s.io/podset-required-topology: topology.nebius.com/tier-1
     spec:
       restartPolicy: Never
       nodeSelector:
