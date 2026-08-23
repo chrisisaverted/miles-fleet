@@ -41,10 +41,6 @@ class _Recipe:
     hf_name: str
     megatron_model_type: str  # unused when backend == "fsdp"
     tito_model: str
-    backend: str = "megatron"  # "megatron" | "fsdp" (fsdp trains the full HF
-    # model incl. vision towers; no torch_dist conversion)
-    vision: bool = False  # screenshots into engine payload + train inputs
-    sglang_mem_fraction: float = 0.7
     # perf/parallelism (expert parallel is min(8, num_gpus) at compose time,
     # so sub-node runs work; the stock recipes assume a full 8-GPU node)
     tp: int
@@ -55,6 +51,10 @@ class _Recipe:
     rollout_gpus_per_engine: int | None
     sglang_extra: str
     train_extra: str
+    backend: str = "megatron"  # "megatron" | "fsdp" (fsdp trains the full HF
+    # model incl. vision towers; no torch_dist conversion)
+    vision: bool = False  # screenshots into engine payload + train inputs
+    sglang_mem_fraction: float = 0.7
 
 
 _RECIPES: dict[str, _Recipe] = {

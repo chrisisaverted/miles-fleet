@@ -43,7 +43,7 @@ ENV FLEET_FLT=/usr/local/bin/flt
 # Import smoke: `pip install completed` != `image works`. Pulls the full
 # integration import chain (miles + sglang + fleet_runtime + our modules).
 RUN cd /root/miles \
-    && python -c "import examples.fleet.rollout, examples.fleet.session, examples.fleet.prepare_dataset; print('fleet integration imports OK')" \
+    && python -c "import examples.fleet.rollout, examples.fleet.session, examples.fleet.prepare_dataset; import importlib.util as u, sys; spec = u.spec_from_file_location('rf', 'examples/fleet/launch/run_fleet.py'); m = u.module_from_spec(spec); spec.loader.exec_module(m); print('fleet integration + launcher import OK')" \
     && python -c "import fleet_runtime; from fleet_runtime.cli.sources import resolve_source; print('fleet_runtime OK')" \
     && python -c "from miles.utils.chat_template_utils.tito_tokenizer import GLM47TITOTokenizer; print('tito OK')" \
     && (flt version || flt --version) \
