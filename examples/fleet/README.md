@@ -62,9 +62,17 @@ MODEL_NAME=glm4.7-flash bash examples/fleet/launch/rl1/launch_fleet.sh <tag> <ta
 One launcher, one `_Recipe` row per model (`launch/run_fleet.py`): the row
 carries the model-coupled config (HF id, Megatron type + parallelism, sglang
 engine flags, TITO tokenizer family); the Fleet rollout block is shared.
-Current rows: `glm4.7-flash` (validated end-to-end), `qwen3.5-35b-a3b`
-(ported from the stock recipe, unvalidated with this connector). Adding a
-model = adding a row, ported from its `scripts/run_*.py` recipe.
+Adding a model = adding a row, ported from its `scripts/run_*.py` recipe.
+
+| Model | Status with this connector |
+|---|---|
+| GLM-4.7-Flash | Probed end-to-end 2026-08-22 on rl1: debug_minimal (2 GRPO steps + save), rollout-only gate (0.12 parse failures/ep, 20/32 submitted, 6/32 pass), production runs on ade-bench and evaluation-benchmark |
+| Qwen3.5-35B-A3B | Recipe row ported from `run_qwen3_5_35b_a3b_mtp.py`; never run here |
+
+Surveyed as single-8xH200-node candidates (recipes exist in miles, no rows
+yet): Qwen3-30B-A3B, Qwen3 dense 0.6B-32B, Qwen3.5/3.6/3.8 dense 4B-27B,
+Qwen3-Next-80B-A3B (single-node topology), Nemotron-3-Nano 4B/30B-A3B,
+Gemma-4 26B-A4B/31B, gpt-oss-20b. No Kimi or DeepSeek fits one node.
 
 Pins: fleet-runtime and the `flt` binary must come from the SAME
 `fleet-ai/platform` commit (validated pair: `72e656c948ab`). The recipe drops
