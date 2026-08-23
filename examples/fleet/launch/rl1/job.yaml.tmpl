@@ -129,12 +129,14 @@ spec:
               for LOC in $(cat /tmp/pull_list.txt); do
                 echo "pre-pulling $LOC"
                 PULLED=""
-                for A in 1 2 3; do
+                # registry-alpha 502 outages last minutes, not seconds
+                # (measured 2026-08-23); keep retrying for ~5 minutes
+                for A in 1 2 3 4 5 6 7 8 9 10; do
                   docker pull -q "$LOC" && { PULLED=1; break; }
                   echo "pull attempt $A failed for $LOC, retrying"
-                  sleep 15
+                  sleep 30
                 done
-                test -n "$PULLED" || { echo "pull failed after 3 attempts: $LOC"; exit 1; }
+                test -n "$PULLED" || { echo "pull failed after 10 attempts: $LOC"; exit 1; }
               done
 
               export FLEET_DOCKER_TIMEOUT_S=600
