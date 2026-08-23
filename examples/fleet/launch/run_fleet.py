@@ -10,8 +10,6 @@ conversion type) come from the row, the Fleet rollout block is shared.
 
 Rows:
     glm4.7-flash     validated end-to-end with the Fleet connector (2026-08)
-    qwen3.5-35b-a3b  ported verbatim from scripts/run_qwen3_5_35b_a3b_mtp.py
-                     (H200 blocks); NOT yet validated with the Fleet connector
 
 Deviations from the stock recipes, each with its reason:
 - rollout block targets a prepared Fleet JSONL (see ../prepare_dataset.py).
@@ -34,7 +32,7 @@ import typer
 
 import miles.utils.external_utils.command_utils as U
 
-ModelName = Literal["glm4.7-flash", "qwen3.5-35b-a3b"]
+ModelName = Literal["glm4.7-flash"]
 
 
 @dataclass(frozen=True)
@@ -43,15 +41,14 @@ class _Recipe:
     hf_name: str
     megatron_model_type: str
     tito_model: str
-    # perf/parallelism (EP is filled with num_gpus_per_node at compose time:
-    # both models run EP=8 on a full node; sub-node runs shrink it with the
-    # world size, a deliberate deviation from the 8-GPU-only stock recipes)
+    # perf/parallelism (expert parallel is min(8, num_gpus) at compose time,
+    # so sub-node runs work; the stock recipes assume a full 8-GPU node)
     tp: int
     cp: int
     max_tokens_per_gpu: int
-    # rollout engine: GPUs per sglang engine (GLM-4.7-Flash fits TP1 on H200,
-    # 20 heads; Qwen3.5-35B-A3B's stock recipe runs one TP-all engine)
-    rollout_gpus_per_engine: int | None  # None => num_gpus_per_node
+    # rollout engine: GPUs per sglang engine (None => one engine spanning
+    # all GPUs; GLM-4.7-Flash fits TP1 on H200)
+    rollout_gpus_per_engine: int | None
     sglang_extra: str
     train_extra: str
 
@@ -74,32 +71,6 @@ _RECIPES: dict[str, _Recipe] = {
             "--sglang-speculative-num-draft-tokens 3 "
         ),
         train_extra="",
-    ),
-    # ported from scripts/run_qwen3_5_35b_a3b_mtp.py (H200, tp2-cp2-ep8,
-    # enable_spec + spec_v2, MTP training); unvalidated with this connector
-    "qwen3.5-35b-a3b": _Recipe(
-        hf_org="Qwen",
-        hf_name="Qwen3.5-35B-A3B",
-        megatron_model_type="qwen3.5-35B-A3B",
-        tito_model="qwen35",
-        tp=2,
-        cp=2,
-        max_tokens_per_gpu=32768,  # stock file pins 8192 with "32768 on H200"
-        rollout_gpus_per_engine=None,
-        sglang_extra=(
-            "--sglang-speculative-algorithm EAGLE "
-            "--sglang-speculative-num-steps 2 "
-            "--sglang-speculative-eagle-topk 1 "
-            "--sglang-speculative-num-draft-tokens 3 "
-            "--sglang-mamba-scheduler-strategy extra_buffer "
-        ),
-        train_extra=(
-            "--enable-mtp-training "
-            "--mtp-num-layers 1 "
-            "--mtp-loss-scaling-factor 0.2 "
-            "--moe-token-dispatcher-type flex "
-            "--log-probs-chunk-size 4096 "
-        ),
     ),
 }
 
