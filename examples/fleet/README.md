@@ -13,7 +13,7 @@ miles source changes.
 | Tool result -> message content projection | `content.py` |
 | Taskset -> train/eval JSONL + `images.txt` | `prepare_dataset.py` |
 | GLM-4.7-Flash recipe (stock recipe + Fleet rollout block) | `launch/run_fleet_glm47_flash.py` |
-| Training-node bootstrap (miles container + fleet stack) | `launch/setup_node.sh` |
+| rl1 cluster launch (image build + run Job) | `launch/rl1/` |
 
 ## How it works
 
@@ -48,14 +48,13 @@ samples; run with
 flt pull registry-alpha.fleetai.me/library/ade-bench:latest ade-bench
 python -m examples.fleet.prepare_dataset --taskset-ref ade-bench --output-dir data/ade-bench
 
-# 2. bootstrap the node (8xH200 VM with docker; see the script header for staging)
-bash examples/fleet/launch/setup_node.sh <miles-git-url> <ref>
+# 2. build the trainer image in-cluster (rl1)
+bash examples/fleet/launch/rl1/build_image.sh fleet-integration
 
-# 3. inside the container: rollout-only smoke, then the run
-python examples/fleet/launch/run_fleet_glm47_flash.py \
-  --dataset-dir /root/datasets/fleet/ade-bench --mode rollout_only
-python examples/fleet/launch/run_fleet_glm47_flash.py \
-  --dataset-dir /root/datasets/fleet/ade-bench --run-id ade-$(date +%m%d)
+# 3. launch: debug_minimal smoke, rollout-only gate, then the run
+bash examples/fleet/launch/rl1/launch_fleet.sh <tag> <taskset-remote-ref> debug_minimal
+bash examples/fleet/launch/rl1/launch_fleet.sh <tag> <taskset-remote-ref> rollout_only
+bash examples/fleet/launch/rl1/launch_fleet.sh <tag> <taskset-remote-ref> normal
 ```
 
 Pins: fleet-runtime and the `flt` binary must come from the SAME
