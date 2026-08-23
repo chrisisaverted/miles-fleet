@@ -19,6 +19,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 TAG="${1:-latest}"
 export TASKSET_REMOTE_REF="${2:-registry-alpha.fleetai.me/library/ade-bench:latest}"
 export MODE="${3:-normal}"
+export MODEL_NAME="${MODEL_NAME:-glm4.7-flash}"
 export IMAGE="ghcr.io/fleet-ai/miles-fleet/trainer:${TAG}"
 
 export NUM_GPUS="${NUM_GPUS:-8}"  # full-node default; override for splits
@@ -39,7 +40,7 @@ ts_short=$(basename "${TASKSET_REMOTE_REF%%:*}" | tr '[:upper:]' '[:lower:]' | c
 rand5=$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n' | cut -c1-5)
 export JOB_NAME="${JOB_NAME:-miles-${ts_short}-$(date +%m%d)-${rand5}}"
 export SECRET_NAME="${JOB_NAME}-secrets"
-echo "run name: ${JOB_NAME}"
+echo "run name: ${JOB_NAME} (model: ${MODEL_NAME})"
 
 if [ -n "${GH_TOKEN:-}" ]; then
   "${KUBECTL[@]}" create secret docker-registry ghcr-pull -n fleet-train-jobs \
@@ -55,7 +56,7 @@ fi
   ${AWS_SECRET_ACCESS_KEY:+--from-literal=AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"} \
   --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
 
-envsubst '$JOB_NAME $SECRET_NAME $IMAGE $TASKSET_REMOTE_REF $TASK_LIMIT $NUM_GPUS $MODE $ROLLOUT_BATCH $N_SAMPLES $MAX_TURNS $CONCURRENCY $MAIN_MEM $MAIN_MEM_LIM $SCRIPT_EXTRA' \
+envsubst '$MODEL_NAME $JOB_NAME $SECRET_NAME $IMAGE $TASKSET_REMOTE_REF $TASK_LIMIT $NUM_GPUS $MODE $ROLLOUT_BATCH $N_SAMPLES $MAX_TURNS $CONCURRENCY $MAIN_MEM $MAIN_MEM_LIM $SCRIPT_EXTRA' \
   < "$HERE/job.yaml.tmpl" | "${KUBECTL[@]}" apply -f -
 
 echo

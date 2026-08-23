@@ -12,7 +12,7 @@ miles source changes.
 | Tool-call parser (Qwen/GLM/Kimi grammars, try-all) | `parser.py` |
 | Tool result -> message content projection | `content.py` |
 | Taskset -> train/eval JSONL + `images.txt` | `prepare_dataset.py` |
-| GLM-4.7-Flash recipe (stock recipe + Fleet rollout block) | `launch/run_fleet_glm47_flash.py` |
+| Launcher: recipes keyed by `--model-name` | `launch/run_fleet.py` |
 | rl1 cluster launch (image build + run Job) | `launch/rl1/` |
 
 ## How it works
@@ -52,10 +52,19 @@ python -m examples.fleet.prepare_dataset --taskset-ref ade-bench --output-dir da
 bash examples/fleet/launch/rl1/build_image.sh fleet-integration
 
 # 3. launch: debug_minimal smoke, rollout-only gate, then the run
-bash examples/fleet/launch/rl1/launch_fleet.sh <tag> <taskset-remote-ref> debug_minimal
-bash examples/fleet/launch/rl1/launch_fleet.sh <tag> <taskset-remote-ref> rollout_only
-bash examples/fleet/launch/rl1/launch_fleet.sh <tag> <taskset-remote-ref> normal
+MODEL_NAME=glm4.7-flash bash examples/fleet/launch/rl1/launch_fleet.sh <tag> <taskset-ref> debug_minimal
+MODEL_NAME=glm4.7-flash bash examples/fleet/launch/rl1/launch_fleet.sh <tag> <taskset-ref> rollout_only
+MODEL_NAME=glm4.7-flash bash examples/fleet/launch/rl1/launch_fleet.sh <tag> <taskset-ref> normal
 ```
+
+## Models
+
+One launcher, one `_Recipe` row per model (`launch/run_fleet.py`): the row
+carries the model-coupled config (HF id, Megatron type + parallelism, sglang
+engine flags, TITO tokenizer family); the Fleet rollout block is shared.
+Current rows: `glm4.7-flash` (validated end-to-end), `qwen3.5-35b-a3b`
+(ported from the stock recipe, unvalidated with this connector). Adding a
+model = adding a row, ported from its `scripts/run_*.py` recipe.
 
 Pins: fleet-runtime and the `flt` binary must come from the SAME
 `fleet-ai/platform` commit (validated pair: `72e656c948ab`). The recipe drops
