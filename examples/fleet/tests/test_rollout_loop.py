@@ -30,7 +30,13 @@ class StubTokenizer:
             names = ",".join(t["function"]["name"] for t in tools)
             parts.append(f"<tools>{names}</tools>")
         for m in messages:
-            parts.append(f"<{m['role']}>{m.get('content') or ''}</>")
+            content = m.get("content") or ""
+            if isinstance(content, list):
+                content = "".join(
+                    part.get("text", "<img>") if part.get("type") != "image" else "<img>"
+                    for part in content
+                )
+            parts.append(f"<{m['role']}>{content}</>")
         if add_generation_prompt:
             parts.append("<gen>")
         return "".join(parts)
@@ -150,6 +156,24 @@ def make_args(**overrides) -> Namespace:
     )
     base.update(overrides)
     return Namespace(**base)
+
+
+class StubProcessor:
+    """Tokenizes text like StubTokenizer and appends one 9999 pad per image;
+    emits a pixel_values tensor row per image."""
+
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+
+    def __call__(self, text, images=None):
+        import torch
+
+        ids = self.tokenizer.encode(text) + [9999] * len(images or [])
+        return {
+            "input_ids": [ids],
+            "attention_mask": [[1] * len(ids)],
+            "pixel_values": torch.ones(len(images or []), 3),
+        }
 
 
 class StubState:
@@ -416,3 +440,74 @@ def test_env_prepare_failure_writes_off_not_raises(monkeypatch):
     assert "prepare failed" in sample.metadata["episode_error"]
     assert session.closed
     assert session.graded_with is None
+
+
+# ------------------------------------------------------------------- vision
+
+
+def _tiny_data_url():
+    import base64
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), (255, 0, 0)).save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def run_generate_vision(monkeypatch, session, script, args=None):
+    args = args or make_args(fleet_vision=True)
+    state = StubState(args)
+    state.processor = StubProcessor(state.tokenizer)
+    monkeypatch.setattr(rollout_mod, "FleetSession", lambda *a, **k: session)
+    captured = {"payloads": []}
+
+    async def capturing_post(url, payload, headers=None):
+        captured["payloads"].append(payload)
+        entry = script.pop(0)
+        if isinstance(entry, str):
+            entry = {"text": entry, "finish": "stop"}
+        ids = state.tokenizer.encode(entry["text"])
+        return {
+            "text": entry["text"],
+            "meta_info": {
+                "finish_reason": {"type": entry.get("finish", "stop")},
+                "output_token_logprobs": [(-0.1, tid, None) for tid in ids],
+            },
+        }
+
+    monkeypatch.setattr(rollout_mod, "post", capturing_post)
+    monkeypatch.setattr(rollout_mod, "_SWEPT", True)
+    monkeypatch.setattr(rollout_mod, "_ENV_SEMAPHORE", None)
+    monkeypatch.setattr(rollout_mod, "_PREPARE_SEMAPHORE", None)
+    monkeypatch.setattr(rollout_mod, "_tito_for", lambda state_, args_: FakeTito(state_.tokenizer))
+    sample = Sample(prompt=[{"role": "user", "content": "row"}], metadata={"taskset_ref": "ts", "task_key": "t1"})
+    fn_input = GenerateFnInput(state=state, sample=sample, sampling_params={"max_new_tokens": 64}, evaluation=False)
+    output = asyncio.run(rollout_mod.generate(fn_input))
+    return output.samples, captured
+
+
+def test_vision_images_flow_to_payload_and_train_inputs(monkeypatch):
+    url = _tiny_data_url()
+    session = FakeFleetSession(
+        tool_outcomes=[ToolOutcome(text="shot taken", images=[url, url]), ToolOutcome(text="ok")]
+    )
+    sample, captured = run_generate_vision(monkeypatch, session, [CALL, CALL, SUBMIT])
+    # engine payloads after the screenshot turn carry the accumulated images
+    assert "image_data" not in captured["payloads"][0]
+    assert len(captured["payloads"][1]["image_data"]) == 2
+    assert len(captured["payloads"][2]["image_data"]) == 2
+    # processor tensors merged: one row per image
+    assert sample.multimodal_train_inputs["pixel_values"].shape[0] == 2
+    # masks stay aligned; image pad tokens are masked out
+    assert len(sample.loss_mask) == sample.response_length
+    assert sample.reward == 1.0
+    assert sample.metadata["images"] == 2
+
+
+def test_vision_off_keeps_text_path(monkeypatch):
+    session = FakeFleetSession(tool_outcomes=[ToolOutcome(text="plain")])
+    sample = run_generate(monkeypatch, session, [CALL, SUBMIT])
+    assert sample.multimodal_train_inputs is None
+    assert not (sample.multimodal_inputs or {}).get("images")

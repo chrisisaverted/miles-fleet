@@ -32,15 +32,19 @@ import typer
 
 import miles.utils.external_utils.command_utils as U
 
-ModelName = Literal["glm4.7-flash"]
+ModelName = Literal["glm4.7-flash", "qwen3.8-27b"]
 
 
 @dataclass(frozen=True)
 class _Recipe:
     hf_org: str
     hf_name: str
-    megatron_model_type: str
+    megatron_model_type: str  # unused when backend == "fsdp"
     tito_model: str
+    backend: str = "megatron"  # "megatron" | "fsdp" (fsdp trains the full HF
+    # model incl. vision towers; no torch_dist conversion)
+    vision: bool = False  # screenshots into engine payload + train inputs
+    sglang_mem_fraction: float = 0.7
     # perf/parallelism (expert parallel is min(8, num_gpus) at compose time,
     # so sub-node runs work; the stock recipes assume a full 8-GPU node)
     tp: int
@@ -70,6 +74,27 @@ _RECIPES: dict[str, _Recipe] = {
             "--sglang-speculative-eagle-topk 1 "
             "--sglang-speculative-num-draft-tokens 3 "
         ),
+        train_extra="",
+    ),
+    # Vision-capable (Qwen3_5ForConditionalGeneration with vision_config).
+    # FSDP backend per miles's own VL path (Megatron's qwen3_5 spec is
+    # language-only); flags from scripts/run_qwen3_dense.py (qwen3.8-27B row)
+    # + scripts/run_qwen3_0_6b_fsdp.py + tests/e2e/fsdp/r3/_common.py.
+    # Engine TP=1: sglang TP>1 emits garbage for this family on the pinned
+    # version (see run_qwen3_dense.py comment / sglang#21039).
+    "qwen3.8-27b": _Recipe(
+        hf_org="Qwen",
+        hf_name="Qwen3.8-27B",
+        megatron_model_type="",
+        tito_model="qwen35",
+        backend="fsdp",
+        vision=True,
+        sglang_mem_fraction=0.8,
+        tp=1,
+        cp=1,
+        max_tokens_per_gpu=8192,
+        rollout_gpus_per_engine=1,
+        sglang_extra="--sglang-attention-backend fa3 ",
         train_extra="",
     ),
 }
@@ -107,6 +132,8 @@ def prepare(args: ScriptArgs):
     U.exec_command_cpu(f"mkdir -p {args.model_dir} {args.data_dir}")
     if not (hf_dir / "config.json").exists():
         U.exec_command_cpu(f"hf download {recipe.hf_org}/{recipe.hf_name} --local-dir {hf_dir}")
+    if recipe.backend == "fsdp":
+        return  # FSDP loads the HF checkpoint directly; no conversion
     if not (Path(args.model_dir) / f"{recipe.hf_name}_torch_dist").exists():
         U.convert_checkpoint(
             model_name=recipe.hf_name,
@@ -120,21 +147,23 @@ def prepare(args: ScriptArgs):
 
 def execute(args: ScriptArgs):
     recipe = args.recipe
-    ref_load_path = f"{args.model_dir}/{recipe.hf_name}_torch_dist"
+    hf_path = f"{args.model_dir}/{recipe.hf_name}"
+    ref_load_path = hf_path if recipe.backend == "fsdp" else f"{hf_path}_torch_dist"
     load_save_path = f"{args.output_dir}/{args.run_id}/checkpoints"
     debug = args.mode == "debug_minimal"
     few_steps = args.mode != "normal"
 
     ckpt_args = (
-        f"--hf-checkpoint {args.model_dir}/{recipe.hf_name} "
+        f"--hf-checkpoint {hf_path} "
         f"--ref-load {ref_load_path} "
         f"--load {load_save_path} "
         f"--save {load_save_path} "
         f"--save-interval {2 if debug else 20} "
         f"--save-retain-interval {2 if debug else 20} "
-        "--async-save "
-        "--use-persistent-ckpt-worker "
     )
+    if recipe.backend == "megatron":
+        # async save is Megatron's checkpoint worker pair
+        ckpt_args += "--async-save --use-persistent-ckpt-worker "
 
     fleet_args = (
         "--custom-generate-function-path examples.fleet.rollout.generate "
@@ -146,6 +175,7 @@ def execute(args: ScriptArgs):
         "--fleet-episode-timeout-s 2400 "
         "--fleet-tool-output-max-chars 4000 "
         f"{'--fleet-partial-reward ' if args.partial_reward else ''}"
+        f"{'--fleet-vision ' if recipe.vision else ''}"
     )
 
     rollout_args = (
@@ -167,19 +197,30 @@ def execute(args: ScriptArgs):
         f"{fleet_args}"
     )
 
-    perf_args = (
-        f"--tensor-model-parallel-size {recipe.tp} "
-        "--sequence-parallel "
-        "--pipeline-model-parallel-size 1 "
-        f"--context-parallel-size {recipe.cp} "
-        f"--expert-model-parallel-size {min(8, args.num_gpus_per_node)} "
-        "--expert-tensor-parallel-size 1 "
-        "--recompute-granularity full "
-        "--recompute-method uniform "
-        "--recompute-num-layers 1 "
-        "--use-dynamic-batch-size "
-        f"--max-tokens-per-gpu {recipe.max_tokens_per_gpu} "
-    )
+    if recipe.backend == "fsdp":
+        perf_args = (
+            "--train-backend fsdp "
+            "--gradient-checkpointing "
+            "--update-weight-buffer-size 536870912 "
+            "--attn-implementation flash_attention_3 "
+            """--train-env-vars '{"PYTORCH_CUDA_ALLOC_CONF":"expandable_segments:True"}' """
+            "--use-dynamic-batch-size "
+            f"--max-tokens-per-gpu {recipe.max_tokens_per_gpu} "
+        )
+    else:
+        perf_args = (
+            f"--tensor-model-parallel-size {recipe.tp} "
+            "--sequence-parallel "
+            "--pipeline-model-parallel-size 1 "
+            f"--context-parallel-size {recipe.cp} "
+            f"--expert-model-parallel-size {min(8, args.num_gpus_per_node)} "
+            "--expert-tensor-parallel-size 1 "
+            "--recompute-granularity full "
+            "--recompute-method uniform "
+            "--recompute-num-layers 1 "
+            "--use-dynamic-batch-size "
+            f"--max-tokens-per-gpu {recipe.max_tokens_per_gpu} "
+        )
 
     grpo_args = (
         "--advantage-estimator grpo "
@@ -198,24 +239,31 @@ def execute(args: ScriptArgs):
         "--weight-decay 0.1 "
         "--adam-beta1 0.9 "
         "--adam-beta2 0.98 "
-        "--optimizer-cpu-offload "
-        "--overlap-cpu-optimizer-d2h-h2d "
-        "--use-precision-aware-optimizer "
     )
+    if recipe.backend == "megatron":
+        optimizer_args += (
+            "--optimizer-cpu-offload "
+            "--overlap-cpu-optimizer-d2h-h2d "
+            "--use-precision-aware-optimizer "
+        )
 
     engine_gpus = recipe.rollout_gpus_per_engine or args.num_gpus_per_node
     sglang_args = (
         f"--rollout-num-gpus-per-engine {engine_gpus} "
-        "--sglang-mem-fraction-static 0.7 "
+        f"--sglang-mem-fraction-static {recipe.sglang_mem_fraction} "
         f"{recipe.sglang_extra}"
     )
 
-    misc_args = (
-        "--attention-dropout 0.0 "
-        "--hidden-dropout 0.0 "
-        "--accumulate-allreduce-grads-in-fp32 "
-        "--attention-softmax-in-fp32 "
-        "--attention-backend flash "
+    misc_args = ""
+    if recipe.backend == "megatron":
+        misc_args += (
+            "--attention-dropout 0.0 "
+            "--hidden-dropout 0.0 "
+            "--accumulate-allreduce-grads-in-fp32 "
+            "--attention-softmax-in-fp32 "
+            "--attention-backend flash "
+        )
+    misc_args += (
         f"--actor-num-nodes {args.num_nodes} "
         f"--actor-num-gpus-per-node {args.num_gpus_per_node} "
         f"--num-gpus-per-node {args.num_gpus_per_node} "
@@ -242,7 +290,7 @@ def execute(args: ScriptArgs):
         train_args=train_args,
         config=args,
         num_gpus_per_node=args.num_gpus_per_node,
-        megatron_model_type=recipe.megatron_model_type,
+        megatron_model_type=recipe.megatron_model_type if recipe.backend == "megatron" else None,
         megatron_path=args.megatron_path,
     )
 

@@ -109,7 +109,7 @@ def _session_config(args) -> SessionConfig:
         partial_reward=args.fleet_partial_reward,
         tool_output_max_chars=args.fleet_tool_output_max_chars,
         screenshot_max_dim=args.fleet_screenshot_max_dim or None,
-        vision=False,  # vision lands in phase 2 (multimodal_train_inputs plumbing)
+        vision=args.fleet_vision,
         call_tool_timeout_s=args.fleet_call_tool_timeout_s,
         grade_timeout_s=args.fleet_grade_timeout_s,
     )
@@ -121,6 +121,7 @@ class _EpisodeStats:
     tool_calls: int = 0
     tool_errors: int = 0
     parse_failures: int = 0
+    images: int = 0
     steps_closed: int = 0
     env_time: float = 0.0
     # Digest the next complete_step must present after a reset boundary;
@@ -137,6 +138,9 @@ class _Segment:
     sample: Sample
     messages: List[Dict[str, Any]]
     prompt_len: int
+    # vision: per-turn processor outputs (pixel_values etc.), concatenated
+    # into sample.multimodal_train_inputs at finalize
+    mm_chunks: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------- segments
@@ -221,6 +225,98 @@ def _append_messages(segment: _Segment, tito, new_messages: List[Dict[str, Any]]
     segment.messages.extend(new_messages)
 
 
+# --------------------------------------------------------------------- vision
+
+
+def _data_urls_to_pil(urls: List[str]) -> List[Any]:
+    import base64
+    import io
+
+    from PIL import Image
+
+    images = []
+    for url in urls:
+        payload = url.split(",", 1)[1]
+        images.append(Image.open(io.BytesIO(base64.b64decode(payload))).convert("RGB"))
+    return images
+
+
+def _boundary_fix(tito, sample: Sample) -> None:
+    """Apply the TITO family's junction rule to the sampled tail before an
+    out-of-band (processor-based) append. Mirrors merge_tokens: Qwen inserts
+    the newline its models stop before; GLM trims its ambiguous stop token."""
+    tokens = sample.tokens
+    im_end = getattr(tito, "_im_end_id", None)
+    if im_end is not None and tokens and tokens[-1] == im_end:
+        sample.tokens = tokens + [tito._newline_id]
+        sample.response_length += 1
+        sample.loss_mask = (sample.loss_mask or []) + [0]
+        sample.rollout_log_probs = (sample.rollout_log_probs or []) + [0.0]
+        return
+    ambiguous = getattr(tito, "_ambiguous_boundary_ids", None)
+    if ambiguous and tokens and tokens[-1] in ambiguous:
+        sample.tokens = tokens[:-1]
+        sample.response_length -= 1
+        sample.loss_mask = sample.loss_mask[:-1]
+        sample.rollout_log_probs = sample.rollout_log_probs[:-1]
+
+
+def _append_multimodal(segment: _Segment, tito, state, message: Dict[str, Any], images: List[Any]) -> None:
+    """Append an observation that carries images: render the message under
+    the constant dummy prefix, expand image tokens with the PROCESSOR, trim
+    the prefix by its tokenizer length (image expansion only happens after
+    it), and append with loss mask 0. Accumulates engine images on the sample
+    and the processor tensors on the segment for the finalize merge."""
+    sample = segment.sample
+    _boundary_fix(tito, sample)
+
+    base = [_VISION_DUMMY_USER, {"role": "assistant", "content": ""}]
+    dummy_text = tito.apply_chat_template(base, add_generation_prompt=False, tokenize=False)
+    full_text = tito.apply_chat_template(base + [message], add_generation_prompt=True, tokenize=False)
+    if not full_text.startswith(dummy_text):
+        raise ValueError("chat template is not append-only over the vision dummy prefix")
+    trim = len(state.tokenizer.encode(dummy_text, add_special_tokens=False))
+
+    processor_output = state.processor(text=full_text, images=images)
+    ids = list(processor_output["input_ids"][0])[trim:]
+    chunk = {
+        k: v for k, v in processor_output.items() if k not in ("input_ids", "attention_mask")
+    }
+    if chunk:
+        segment.mm_chunks.append(chunk)
+
+    sample.response += state.tokenizer.decode(ids)
+    sample.response_length += len(ids)
+    sample.tokens = sample.tokens + ids
+    sample.loss_mask = (sample.loss_mask or []) + [0] * len(ids)
+    sample.rollout_log_probs = (sample.rollout_log_probs or []) + [0.0] * len(ids)
+
+    mm = sample.multimodal_inputs or {}
+    mm["images"] = (mm.get("images") or []) + images
+    sample.multimodal_inputs = mm
+    segment.messages.append(message)
+
+
+def _merge_mm_chunks(chunks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Concatenate per-turn processor tensors (geo3k's merge)."""
+    import torch
+
+    values_by_key: Dict[str, List[Any]] = {}
+    for chunk in chunks:
+        for key, val in (chunk or {}).items():
+            if val is not None:
+                values_by_key.setdefault(key, []).append(val)
+    merged = {
+        key: torch.cat(vals, dim=0)
+        for key, vals in values_by_key.items()
+        if all(isinstance(v, torch.Tensor) for v in vals)
+    }
+    return merged or None
+
+
+_VISION_DUMMY_USER = {"role": "user", "content": "dummy"}
+
+
 # --------------------------------------------------------------------- loop
 
 
@@ -253,7 +349,9 @@ async def _episode_loop(
         params = dict(sampling_params)
         per_turn = args.fleet_max_tokens_per_turn
         params["max_new_tokens"] = min(per_turn, params.get("max_new_tokens") or per_turn)
-        payload, halt_status = compute_request_payload(args, segment.sample.tokens, params)
+        payload, halt_status = compute_request_payload(
+            args, segment.sample.tokens, params, multimodal_inputs=segment.sample.multimodal_inputs
+        )
         if payload is None:
             segment.sample.status = halt_status
             return None, "context_full"
@@ -309,6 +407,7 @@ async def _episode_loop(
             continue
 
         # ---------------------- ordinary tool turn -------------------------
+        turn_images: List[str] = []
         if tool_call:
             stats.tool_calls += 1
             t0 = time.time()
@@ -319,6 +418,8 @@ async def _episode_loop(
                 body = f"Error: {outcome.error}"
             else:
                 body = f"Tool result:\n{outcome.text}" if outcome.text else "Action executed."
+                turn_images = outcome.images
+                stats.images += len(turn_images)
         else:
             stats.parse_failures += 1
             body = "No tool call found. End your response with exactly one tool call."
@@ -338,7 +439,12 @@ async def _episode_loop(
             }
         else:
             message = {"role": "user", "content": body}
-        _append_messages(segment, tito, [message])
+        if turn_images:
+            pils = _data_urls_to_pil(turn_images)
+            message["content"] = [{"type": "text", "text": body}] + [{"type": "image"} for _ in pils]
+            _append_multimodal(segment, tito, state, message, pils)
+        else:
+            _append_messages(segment, tito, [message])
         record(message)
 
 
@@ -349,8 +455,6 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
     args = input.args
     state = input.state
     assert not args.partial_rollout, "fleet episodes own live container state; partial rollout is not supported"
-    if args.fleet_vision:
-        raise NotImplementedError("fleet vision mode is phase 2; run text-only for now")
 
     base_sample = deepcopy(input.sample)
     _startup_once()
@@ -437,6 +541,7 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
         "tool_calls": stats.tool_calls,
         "tool_errors": stats.tool_errors,
         "parse_failures": stats.parse_failures,
+        "images": stats.images,
         "steps_closed": stats.steps_closed,
         "segments": len(segments),
         "verifier_failed": 1.0 if grade.verifier_failed else 0.0,
@@ -447,6 +552,8 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
         sample.reward = grade.reward
         if sample.status == Sample.Status.PENDING:
             sample.status = Sample.Status.COMPLETED
+        if segment.mm_chunks:
+            sample.multimodal_train_inputs = _merge_mm_chunks(segment.mm_chunks)
         sample.metadata.update(episode_meta)
         sample.metadata["segment_index"] = index
     # env wall-clock is an episode quantity; book it once, not per segment.
@@ -484,7 +591,11 @@ def _add_arguments(parser: argparse.ArgumentParser):
         default="default",
         help="miles TITO tokenizer family (--tito-model values): glm47, qwen3_5, kimi25, ...",
     )
-    parser.add_argument("--fleet-vision", action="store_true", help="phase 2; raises for now")
+    parser.add_argument(
+        "--fleet-vision",
+        action="store_true",
+        help="screenshots ride into the engine payload and multimodal_train_inputs (VL models)",
+    )
 
 
 generate.add_arguments = _add_arguments
