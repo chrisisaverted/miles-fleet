@@ -147,6 +147,16 @@ def prepare(args: ScriptArgs):
 
 def execute(args: ScriptArgs):
     recipe = args.recipe
+    # Swap in the TITO family's fixed chat template where one is registered
+    # (GLM resolves to None). Qwen3.5's stock template raises "No user query
+    # found in messages" on the TITO suffix render ([dummy system, dummy
+    # assistant, tool result]), which has no user turn; the fixed template
+    # drops that raise. miles wires this via --tito-model, but that flag
+    # requires --use-session-server, which a custom generate fn doesn't use,
+    # so pass the resolved path through --chat-template-path directly.
+    from miles.utils.chat_template_utils import resolve_fixed_chat_template
+
+    fixed_template_path, _ = resolve_fixed_chat_template(recipe.tito_model)
     hf_path = f"{args.model_dir}/{recipe.hf_name}"
     ref_load_path = hf_path if recipe.backend == "fsdp" else f"{hf_path}_torch_dist"
     load_save_path = f"{args.output_dir}/{args.run_id}/checkpoints"
@@ -169,6 +179,7 @@ def execute(args: ScriptArgs):
         )
 
     fleet_args = (
+        f"{f'--chat-template-path {fixed_template_path} ' if fixed_template_path else ''}"
         "--custom-generate-function-path examples.fleet.rollout.generate "
         f"--fleet-tito-model {recipe.tito_model} "
         f"--fleet-max-turns {2 if debug else args.max_turns} "
