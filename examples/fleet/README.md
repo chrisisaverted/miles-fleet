@@ -67,8 +67,10 @@ Megatron settings, engine flags, and tokenizer family. Adding a model means
 porting one row from its `scripts/run_*.py` recipe.
 
 Probed with this connector so far: **GLM-4.7-Flash** (2026-08-22 on rl1:
-smoke, rollout gate, and production runs on ade-bench and
-evaluation-benchmark).
+smoke, rollout gate, and production runs on
+[ade-bench](https://wandb.ai/thefleet/miles-run_fleet_glm47_flash/groups/miles-train-ade)
+and
+[evaluation-benchmark](https://wandb.ai/thefleet/miles-run_fleet_glm47_flash/groups/miles-train-evalbench)).
 
 ## Tests
 
