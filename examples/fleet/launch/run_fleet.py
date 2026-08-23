@@ -159,11 +159,14 @@ def execute(args: ScriptArgs):
         f"--load {load_save_path} "
         f"--save {load_save_path} "
         f"--save-interval {2 if debug else 20} "
-        f"--save-retain-interval {2 if debug else 20} "
     )
     if recipe.backend == "megatron":
-        # async save is Megatron's checkpoint worker pair
-        ckpt_args += "--async-save --use-persistent-ckpt-worker "
+        # Megatron-only checkpoint flags: retention pruning and the async
+        # save worker pair (the FSDP parser rejects them)
+        ckpt_args += (
+            f"--save-retain-interval {2 if debug else 20} "
+            "--async-save --use-persistent-ckpt-worker "
+        )
 
     fleet_args = (
         "--custom-generate-function-path examples.fleet.rollout.generate "
