@@ -66,13 +66,11 @@ One recipe row per model in `launch/run_fleet.py`; the row holds the HF id,
 Megatron settings, engine flags, and tokenizer family. Adding a model means
 porting one row from its `scripts/run_*.py` recipe.
 
-Runs so far (all GLM-4.7-Flash, 4x H200 on rl1):
+Runs:
 
-| Taskset | Run | Outcome |
+| Model | Taskset | Run |
 |---|---|---|
-| ade-bench | [miles-train-ade](https://wandb.ai/thefleet/miles-run_fleet_glm47_flash/groups/miles-train-ade) | Training (200 rollouts planned); pass rate ~0.15-0.23, flat so far |
-| evaluation-benchmark | [miles-train-evalbench](https://wandb.ai/thefleet/miles-run_fleet_glm47_flash/groups/miles-train-evalbench) | Stopped by design: the benchmark is computer-use (screenshot observations) and GLM-4.7-Flash is text-only, so the model ran blind. Pipeline proven end to end; resumes once vision support and a vision model land |
-| ade-bench (gates) | [miles-smoke-ade / miles-rollout-ade](https://wandb.ai/thefleet/miles-run_fleet_glm47_flash) | debug_minimal smoke passed; rollout gate: 0.12 parse failures/episode, 20/32 episodes submitted, 6/32 passed |
+| GLM-4.7-Flash | ade-bench | [miles-train-ade](https://wandb.ai/thefleet/miles-run_fleet_glm47_flash/groups/miles-train-ade) |
 
 ## Tests
 
