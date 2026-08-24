@@ -95,7 +95,11 @@ _RECIPES: dict[str, _Recipe] = {
         max_tokens_per_gpu=8192,
         rollout_gpus_per_engine=1,
         sglang_extra="--sglang-attention-backend fa3 ",
-        train_extra="",
+        # fp32 master + Adam states for 27B (~324GB) don't fit in 8x140GB
+        # beside activations: first train step OOM'd at 120GB allocated
+        # (2026-08-23). miles's own 30B FSDP recipe defaults this on for the
+        # same reason (run_qwen3_30b_a3b_fsdp.py).
+        train_extra="--fsdp-cpu-offload ",
     ),
 }
 
