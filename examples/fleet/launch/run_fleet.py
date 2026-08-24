@@ -55,6 +55,8 @@ class _Recipe:
     # model incl. vision towers; no torch_dist conversion)
     vision: bool = False  # screenshots into engine payload + train inputs
     sglang_mem_fraction: float = 0.7
+    max_response_len: int = 24576
+    max_context_len: int = 30720
 
 
 _RECIPES: dict[str, _Recipe] = {
@@ -89,27 +91,27 @@ _RECIPES: dict[str, _Recipe] = {
         tito_model="qwen35",
         backend="fsdp",
         vision=True,
-        # memory knobs follow miles's own FSDP recipe for this model class
-        # (run_qwen3_30b_a3b_fsdp.py): the fp32 master + Adam states (~324GB
-        # for 27B) run on CPU; both attempts without offload OOM'd in the
-        # first loss.backward() (120GB allocated, 2026-08-23/24).
-        # 0.5, not the recipe's 0.75: --fsdp-cpu-offload disables
-        # offload_train (mutually exclusive, actor.py), so the trainer has no
-        # vacate path and keeps a post-clear_memory residual that scales with
-        # the training peak. Measured (memwatch, 2026-08-24): residual 10.4GB
-        # at 512-token debug scale; >46GB at 20-30K-token full scale (engine
-        # resume OOM'd at both 0.75 and 0.65). 0.5 leaves ~67GB for the
-        # residual; KV stays ample (linear-attention hybrid, token usage ~0).
-        # The 30B recipe survives 0.75 because its 4K responses leave a small
-        # residual. Real fix is upstream: a trainer vacate compatible with
-        # fsdp_cpu_offload.
-        sglang_mem_fraction=0.5,
+        # Memory recipe (measured, 2026-08-24, single 8xH200 node):
+        # - NO --fsdp-cpu-offload: it disables offload_train, the trainer then
+        #   cannot vacate between phases and every engine resume OOMs
+        #   (reproduced in pure miles; upstream fix pending). With
+        #   offload_train active the trainer drops to 3.3GB between phases.
+        # - Adam fp32 on GPU costs ~40GB/rank; at a 30.7K-token worst sample
+        #   the train step needed ~134GB and OOM'd by ~14GB. Context capped at
+        #   24576 (response 18432) puts the worst rank at ~121GB. Single-node
+        #   compromise: truncates ~25% of episodes (mean total length 20.9K);
+        #   restore the 30720/24576 defaults on multi-node.
+        # - 0.8 mem fraction per the official recipe (GDN recurrent state is
+        #   151MB per in-flight sequence).
+        sglang_mem_fraction=0.8,
+        max_response_len=18432,
+        max_context_len=24576,
         tp=1,
         cp=1,
         max_tokens_per_gpu=9216,
         rollout_gpus_per_engine=1,
         sglang_extra="--sglang-attention-backend fa3 ",
-        train_extra="--fsdp-cpu-offload --fleet-screenshot-max-dim 1024 ",
+        train_extra="--fleet-screenshot-max-dim 1024 ",
     ),
 }
 
@@ -215,8 +217,8 @@ def execute(args: ScriptArgs):
         f"--num-rollout {2 if few_steps else 200} "
         f"--rollout-batch-size {args.rollout_batch_size} "
         f"--n-samples-per-prompt {args.n_samples_per_prompt} "
-        f"--rollout-max-response-len {512 if debug else 24576} "
-        "--rollout-max-context-len 30720 "
+        f"--rollout-max-response-len {512 if debug else recipe.max_response_len} "
+        f"--rollout-max-context-len {recipe.max_context_len} "
         "--rollout-temperature 1 "
         f"--global-batch-size {args.rollout_batch_size * args.n_samples_per_prompt} "
         "--dynamic-sampling-filter-path miles.rollout.filter_hub.dynamic_sampling_filters.check_no_aborted "
