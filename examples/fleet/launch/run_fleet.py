@@ -89,19 +89,17 @@ _RECIPES: dict[str, _Recipe] = {
         tito_model="qwen35",
         backend="fsdp",
         vision=True,
-        sglang_mem_fraction=0.8,
+        # memory knobs follow miles's own FSDP recipe for this model class
+        # (run_qwen3_30b_a3b_fsdp.py): the fp32 master + Adam states (~324GB
+        # for 27B) run on CPU; both attempts without offload OOM'd in the
+        # first loss.backward() (120GB allocated, 2026-08-23/24).
+        sglang_mem_fraction=0.75,
         tp=1,
         cp=1,
-        max_tokens_per_gpu=8192,
+        max_tokens_per_gpu=9216,
         rollout_gpus_per_engine=1,
         sglang_extra="--sglang-attention-backend fa3 ",
-        # First train step OOM'd at 120GB allocated (2026-08-23): image-pad
-        # tokens dominate sequence length (mean 10.9 screenshots/episode at
-        # 1366x768 ~= 1.3K tokens each), and the longest sample's activations
-        # plus Adam states exceeded the rank. Downscaling screenshots to max
-        # dim 1024 cuts ~45% of tokens per image; chosen over
-        # --fsdp-cpu-offload to keep the optimizer on-GPU.
-        train_extra="--fleet-screenshot-max-dim 1024 ",
+        train_extra="--fsdp-cpu-offload --fleet-screenshot-max-dim 1024 ",
     ),
 }
 
