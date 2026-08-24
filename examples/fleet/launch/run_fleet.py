@@ -93,13 +93,17 @@ _RECIPES: dict[str, _Recipe] = {
         # (run_qwen3_30b_a3b_fsdp.py): the fp32 master + Adam states (~324GB
         # for 27B) run on CPU; both attempts without offload OOM'd in the
         # first loss.backward() (120GB allocated, 2026-08-23/24).
-        # 0.65, not the recipe's 0.75: --fsdp-cpu-offload disables
-        # offload_train (mutually exclusive, actor.py), so the trainer's
-        # reserved cache from 20-30K-token backwards stays resident between
-        # phases; at 0.75 the engines' memory-pool resume OOM'd after train
-        # step 0 (torch_memory_saver resume, 2026-08-24). The 30B recipe
-        # survives 0.75 because its 4K responses leave far less residual.
-        sglang_mem_fraction=0.65,
+        # 0.5, not the recipe's 0.75: --fsdp-cpu-offload disables
+        # offload_train (mutually exclusive, actor.py), so the trainer has no
+        # vacate path and keeps a post-clear_memory residual that scales with
+        # the training peak. Measured (memwatch, 2026-08-24): residual 10.4GB
+        # at 512-token debug scale; >46GB at 20-30K-token full scale (engine
+        # resume OOM'd at both 0.75 and 0.65). 0.5 leaves ~67GB for the
+        # residual; KV stays ample (linear-attention hybrid, token usage ~0).
+        # The 30B recipe survives 0.75 because its 4K responses leave a small
+        # residual. Real fix is upstream: a trainer vacate compatible with
+        # fsdp_cpu_offload.
+        sglang_mem_fraction=0.5,
         tp=1,
         cp=1,
         max_tokens_per_gpu=9216,
