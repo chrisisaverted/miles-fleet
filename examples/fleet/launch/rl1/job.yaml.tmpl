@@ -107,7 +107,14 @@ spec:
               for i in $(seq 1 90); do docker info >/dev/null 2>&1 && break; sleep 2; done
               docker version --format "dind server: {{.Server.Version}}"
 
-              flt pull "${TASKSET_REMOTE_REF}" taskset
+              # registry-alpha 502 outages last minutes (measured 2026-08-23/24)
+              PULLED=""
+              for A in 1 2 3 4 5 6 7 8 9 10; do
+                flt pull "${TASKSET_REMOTE_REF}" taskset && { PULLED=1; break; }
+                echo "flt pull attempt $A failed, retrying"
+                sleep 30
+              done
+              test -n "$PULLED" || { echo "flt pull failed after 10 attempts"; exit 1; }
               REPO_PATH=$(printf "%s" "${TASKSET_REMOTE_REF}" | cut -d: -f1 | sed "s#^registry-alpha.fleetai.me/##")
               NS=$(printf "%s" "$REPO_PATH" | cut -d/ -f1)
               NAME=$(printf "%s" "$REPO_PATH" | cut -d/ -f2)
@@ -116,7 +123,7 @@ spec:
               TOKEN=$(python -c "import json,os;print(json.load(open(os.path.expanduser('~/.config/fleet/credentials.json')))['registries']['registry-alpha.fleetai.me']['token'])")
               printf "%s" "$TOKEN" | docker login registry-alpha.fleetai.me --username fleet --password-stdin
               mkdir -p ~/.flt/image-locations/sha256
-              curl -fsS -H "Authorization: Bearer $TOKEN" \
+              curl -fsS --retry 10 --retry-delay 30 --retry-all-errors -H "Authorization: Bearer $TOKEN" \
                 "https://registry-alpha.fleetai.me/v1/namespaces/$NS/repositories/$NAME/versions/$ROOT/image-locations" \
                 > ~/.flt/image-locations/sha256/$ROOT_BARE.json
               echo "image-locations plan written for $ROOT"
