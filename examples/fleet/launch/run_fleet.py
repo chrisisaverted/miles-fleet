@@ -104,7 +104,10 @@ _RECIPES: dict[str, _Recipe] = {
         cp=1,
         max_tokens_per_gpu=9216,
         rollout_gpus_per_engine=1,
-        sglang_extra="--sglang-attention-backend fa3 ",
+        # flashinfer, not fa3: FlashAttention v3 is Hopper-only in the pinned
+        # sglang (SM<=90 assertion; B200 is SM100) — the assertion text itself
+        # prescribes flashinfer on Blackwell.
+        sglang_extra="--sglang-attention-backend flashinfer ",
         train_extra="--fleet-screenshot-max-dim 1024 ",
         # Qwen3.8's own fixed template, vendored verbatim from miles PR #2760
         # (branch jiajun/tito-qwen38-27b) until that lands and the base pin
@@ -237,7 +240,9 @@ def execute(args: ScriptArgs):
             "--train-backend fsdp "
             "--gradient-checkpointing "
             "--update-weight-buffer-size 536870912 "
-            "--attn-implementation flash_attention_3 "
+            # sdpa, not flash_attention_3: FA3 kernels are Hopper-only; sdpa
+            # routes to cuDNN's Blackwell kernels in torch 2.11+cu129
+            "--attn-implementation sdpa "
             """--train-env-vars '{"PYTORCH_CUDA_ALLOC_CONF":"expandable_segments:True"}' """
             "--use-dynamic-batch-size "
             f"--max-tokens-per-gpu {recipe.max_tokens_per_gpu} "
