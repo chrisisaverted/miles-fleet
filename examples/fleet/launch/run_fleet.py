@@ -104,10 +104,11 @@ _RECIPES: dict[str, _Recipe] = {
         cp=1,
         max_tokens_per_gpu=9216,
         rollout_gpus_per_engine=1,
-        # flashinfer, not fa3: FlashAttention v3 is Hopper-only in the pinned
-        # sglang (SM<=90 assertion; B200 is SM100) — the assertion text itself
-        # prescribes flashinfer on Blackwell.
-        sglang_extra="--sglang-attention-backend flashinfer ",
+        # triton, not fa3/flashinfer: fa3 is Hopper-only (SM<=90 assertion),
+        # and sglang's registry allows only {trtllm_mha, fa4, triton} on
+        # Blackwell for hybrid GDN models. triton JIT-compiles per-arch so it
+        # cannot mismatch; fa4/trtllm_mha are perf candidates to profile later.
+        sglang_extra="--sglang-attention-backend triton ",
         train_extra="--fleet-screenshot-max-dim 1024 ",
         # Qwen3.8's own fixed template, vendored verbatim from miles PR #2760
         # (branch jiajun/tito-qwen38-27b) until that lands and the base pin
