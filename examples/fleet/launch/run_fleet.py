@@ -85,8 +85,7 @@ _RECIPES: dict[str, _Recipe] = {
     # Sized for the B200 node (179GB usable/GPU, measured 2026-08-25): ~65GB
     # fixed (params+grads+Adam fp32 on GPU) + ~70GB activations at the full
     # 30720 context leave ~44GB headroom — no cpu offload (its engine-resume
-    # bug is reproduced in pure miles; fix pending upstream) and no context
-    # cap. Does NOT fit a 140GB H200 at full context (needed ~134GB+, OOM'd).
+    # bug is reproduced in pure miles; fix pending upstream).
     # Launch with NODE_WORKLOAD=gpu-b200 INSTANCE_TYPE=p6-b200.48xlarge.
     "qwen3.8-27b": _Recipe(
         hf_org="Qwen",
