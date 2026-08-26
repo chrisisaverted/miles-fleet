@@ -32,7 +32,7 @@ import typer
 
 import miles.utils.external_utils.command_utils as U
 
-ModelName = Literal["glm4.7-flash", "qwen3.8-27b", "qwen3.8-27b-b200"]
+ModelName = Literal["glm4.7-flash", "qwen3.8-27b"]
 
 
 @dataclass(frozen=True)
@@ -78,47 +78,17 @@ _RECIPES: dict[str, _Recipe] = {
         ),
         train_extra="",
     ),
-    # Vision-capable (Qwen3_5ForConditionalGeneration with vision_config).
-    # FSDP backend per miles's own VL path (Megatron's qwen3_5 spec is
-    # language-only); flags from scripts/run_qwen3_dense.py (qwen3.8-27B row)
-    # + scripts/run_qwen3_0_6b_fsdp.py + tests/e2e/fsdp/r3/_common.py.
-    # Engine TP=1: sglang TP>1 emits garbage for this family on the pinned
-    # version (see run_qwen3_dense.py comment / sglang#21039).
+    # Vision-capable (Qwen3_5ForConditionalGeneration): FSDP backend, since
+    # miles's Megatron qwen3_5 spec is language-only (docs: "trains the text
+    # path only"). Engine TP=1 (sglang TP>1 garbage for this family on the
+    # pinned version, sglang#21039).
+    # Sized for the B200 node (179GB usable/GPU, measured 2026-08-25): ~65GB
+    # fixed (params+grads+Adam fp32 on GPU) + ~70GB activations at the full
+    # 30720 context leave ~44GB headroom — no cpu offload (its engine-resume
+    # bug is reproduced in pure miles; fix pending upstream) and no context
+    # cap. Does NOT fit a 140GB H200 at full context (needed ~134GB+, OOM'd).
+    # Launch with NODE_WORKLOAD=gpu-b200 INSTANCE_TYPE=p6-b200.48xlarge.
     "qwen3.8-27b": _Recipe(
-        hf_org="Qwen",
-        hf_name="Qwen3.8-27B",
-        megatron_model_type="",
-        tito_model="qwen35",
-        backend="fsdp",
-        vision=True,
-        # Memory recipe (measured, 2026-08-24, single 8xH200 node):
-        # - NO --fsdp-cpu-offload: it disables offload_train, the trainer then
-        #   cannot vacate between phases and every engine resume OOMs
-        #   (reproduced in pure miles; upstream fix pending). With
-        #   offload_train active the trainer drops to 3.3GB between phases.
-        # - Adam fp32 on GPU costs ~40GB/rank; at a 30.7K-token worst sample
-        #   the train step needed ~134GB and OOM'd by ~14GB. Context capped at
-        #   24576 (response 18432) puts the worst rank at ~121GB. Single-node
-        #   compromise: truncates ~25% of episodes (mean total length 20.9K);
-        #   restore the 30720/24576 defaults on multi-node.
-        # - 0.8 mem fraction per the official recipe (GDN recurrent state is
-        #   151MB per in-flight sequence).
-        sglang_mem_fraction=0.8,
-        max_response_len=18432,
-        max_context_len=24576,
-        tp=1,
-        cp=1,
-        max_tokens_per_gpu=9216,
-        rollout_gpus_per_engine=1,
-        sglang_extra="--sglang-attention-backend fa3 ",
-        train_extra="--fleet-screenshot-max-dim 1024 ",
-    ),
-    # B200 node (179GB usable/GPU vs H200's 140, measured 2026-08-25): the
-    # ~65GB fixed cost + ~70GB activations at the full 30720 context fit with
-    # ~44GB headroom, so no context cap and no cpu offload. Same model and
-    # checkpoint as qwen3.8-27b; launch with NODE_WORKLOAD=gpu-b200
-    # INSTANCE_TYPE=p6-b200.48xlarge.
-    "qwen3.8-27b-b200": _Recipe(
         hf_org="Qwen",
         hf_name="Qwen3.8-27B",
         megatron_model_type="",
