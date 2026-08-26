@@ -57,6 +57,9 @@ class _Recipe:
     sglang_mem_fraction: float = 0.7
     max_response_len: int = 24576
     max_context_len: int = 30720
+    # Absolute or repo-relative path to a chat template that overrides the
+    # TITO family's registered one (None = use the family resolution).
+    chat_template: str | None = None
 
 
 _RECIPES: dict[str, _Recipe] = {
@@ -103,6 +106,14 @@ _RECIPES: dict[str, _Recipe] = {
         rollout_gpus_per_engine=1,
         sglang_extra="--sglang-attention-backend fa3 ",
         train_extra="--fleet-screenshot-max-dim 1024 ",
+        # Qwen3.8's own fixed template, vendored verbatim from miles PR #2760
+        # (branch jiajun/tito-qwen38-27b) until that lands and the base pin
+        # moves: the true Qwen3.8 template with only the no-user-query guard
+        # removed. It differs from qwen3.5_fixed materially: a reasoning-effort
+        # system prefix (default xhigh) the model was trained with, and
+        # preserve_thinking semantics. The qwen35 TITO family stays correct for
+        # token merging (PR #2760: qwen38 uses the same Qwen3 boundary merge).
+        chat_template="examples/fleet/templates/qwen3.8_fixed.jinja",
     ),
 }
 
@@ -154,16 +165,19 @@ def prepare(args: ScriptArgs):
 
 def execute(args: ScriptArgs):
     recipe = args.recipe
-    # Swap in the TITO family's fixed chat template where one is registered
-    # (GLM resolves to None). Qwen3.5's stock template raises "No user query
-    # found in messages" on the TITO suffix render ([dummy system, dummy
-    # assistant, tool result]), which has no user turn; the fixed template
-    # drops that raise. miles wires this via --tito-model, but that flag
+    # Swap in a fixed chat template: the stock Qwen templates raise "No user
+    # query found in messages" on the TITO suffix render ([dummy system, dummy
+    # assistant, tool result]), which has no user turn; the fixed templates
+    # drop that raise. miles wires this via --tito-model, but that flag
     # requires --use-session-server, which a custom generate fn doesn't use,
-    # so pass the resolved path through --chat-template-path directly.
+    # so pass the path through --chat-template-path directly. A recipe-level
+    # chat_template wins over the TITO family's registered one.
     from miles.utils.chat_template_utils import resolve_fixed_chat_template
 
-    fixed_template_path, _ = resolve_fixed_chat_template(recipe.tito_model)
+    if recipe.chat_template:
+        fixed_template_path = str(Path(U.repo_base_dir) / recipe.chat_template)
+    else:
+        fixed_template_path, _ = resolve_fixed_chat_template(recipe.tito_model)
     hf_path = f"{args.model_dir}/{recipe.hf_name}"
     ref_load_path = hf_path if recipe.backend == "fsdp" else f"{hf_path}_torch_dist"
     load_save_path = f"{args.output_dir}/{args.run_id}/checkpoints"
