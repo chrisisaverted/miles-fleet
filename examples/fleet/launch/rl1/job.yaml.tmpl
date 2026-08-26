@@ -34,8 +34,8 @@ spec:
       restartPolicy: Never
       nodeSelector:
         kubernetes.io/os: linux
-        workload: gpu-h200
-        node.kubernetes.io/instance-type: p5en.48xlarge
+        workload: ${NODE_WORKLOAD}
+        node.kubernetes.io/instance-type: ${INSTANCE_TYPE}
       tolerations:
         - {key: workload, operator: Exists, effect: NoSchedule}
       imagePullSecrets:

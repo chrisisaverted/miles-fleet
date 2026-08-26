@@ -33,6 +33,9 @@ export TASK_LIMIT="${TASK_LIMIT:-0}"
 # OOM-killed at that point). Request sized so two runs fit the 1900Gi flavor
 # quota; the limit rides node-level overcommit for the brief save peak.
 export MAIN_MEM="${MAIN_MEM:-925Gi}"
+NODE_WORKLOAD="${NODE_WORKLOAD:-gpu-h200}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-p5en.48xlarge}"
+export NODE_WORKLOAD INSTANCE_TYPE
 export MAIN_MEM_LIM="${MAIN_MEM_LIM:-1300Gi}"
 export SCRIPT_EXTRA="${SCRIPT_EXTRA:-}"
 
@@ -56,7 +59,7 @@ fi
   ${AWS_SECRET_ACCESS_KEY:+--from-literal=AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"} \
   --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
 
-envsubst '$MODEL_NAME $JOB_NAME $SECRET_NAME $IMAGE $TASKSET_REMOTE_REF $TASK_LIMIT $NUM_GPUS $MODE $ROLLOUT_BATCH $N_SAMPLES $MAX_TURNS $CONCURRENCY $MAIN_MEM $MAIN_MEM_LIM $SCRIPT_EXTRA' \
+envsubst '$MODEL_NAME $JOB_NAME $SECRET_NAME $IMAGE $TASKSET_REMOTE_REF $TASK_LIMIT $NUM_GPUS $MODE $ROLLOUT_BATCH $N_SAMPLES $MAX_TURNS $CONCURRENCY $MAIN_MEM $MAIN_MEM_LIM $SCRIPT_EXTRA $NODE_WORKLOAD $INSTANCE_TYPE' \
   < "$HERE/job.yaml.tmpl" | "${KUBECTL[@]}" apply -f -
 
 echo

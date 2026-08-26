@@ -32,7 +32,7 @@ import typer
 
 import miles.utils.external_utils.command_utils as U
 
-ModelName = Literal["glm4.7-flash", "qwen3.8-27b"]
+ModelName = Literal["glm4.7-flash", "qwen3.8-27b", "qwen3.8-27b-b200"]
 
 
 @dataclass(frozen=True)
@@ -106,6 +106,28 @@ _RECIPES: dict[str, _Recipe] = {
         sglang_mem_fraction=0.8,
         max_response_len=18432,
         max_context_len=24576,
+        tp=1,
+        cp=1,
+        max_tokens_per_gpu=9216,
+        rollout_gpus_per_engine=1,
+        sglang_extra="--sglang-attention-backend fa3 ",
+        train_extra="--fleet-screenshot-max-dim 1024 ",
+    ),
+    # B200 node (179GB usable/GPU vs H200's 140, measured 2026-08-25): the
+    # ~65GB fixed cost + ~70GB activations at the full 30720 context fit with
+    # ~44GB headroom, so no context cap and no cpu offload. Same model and
+    # checkpoint as qwen3.8-27b; launch with NODE_WORKLOAD=gpu-b200
+    # INSTANCE_TYPE=p6-b200.48xlarge.
+    "qwen3.8-27b-b200": _Recipe(
+        hf_org="Qwen",
+        hf_name="Qwen3.8-27B",
+        megatron_model_type="",
+        tito_model="qwen35",
+        backend="fsdp",
+        vision=True,
+        sglang_mem_fraction=0.8,
+        max_response_len=24576,
+        max_context_len=30720,
         tp=1,
         cp=1,
         max_tokens_per_gpu=9216,
