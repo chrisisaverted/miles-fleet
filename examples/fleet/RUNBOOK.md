@@ -36,6 +36,7 @@ Two validated examples live in [`launch/rl1/examples/`](launch/rl1/examples/):
 {
   "name": "miles-vl-qwen38-01",
   "image": "ghcr.io/fleet-ai/miles-fleet/trainer:6d6baa6b",
+  "command": "python examples/fleet/launch/run_fleet.py --skip-prepare --model-dir /mnt/sfs/miles-fleet/models --output-dir /mnt/sfs/miles-fleet --num-gpus-per-node 8 --rollout-batch-size 8 --n-samples-per-prompt 8 --max-concurrent-envs 8 --model-name qwen3.8-27b --mode normal --num-nodes 1 --run-id miles-vl-qwen38-01 --dataset-dir /mnt/sfs/miles-fleet/miles-vl-qwen38-01/data --data-dir /mnt/sfs/miles-fleet/miles-vl-qwen38-01 --max-turns 32",
   "workers": 1,
   "gpus_per_worker": 8,
   "env": {
@@ -43,7 +44,7 @@ Two validated examples live in [`launch/rl1/examples/`](launch/rl1/examples/):
     "TASKSET_REF": "registry-alpha.fleetai.me/gentle-cedar-garden/evaluation-benchmark:v3",
     "MODE": "normal",
     "TASK_LIMIT": "64",
-    "MAX_TURNS": "32"
+    "RUN_ID": "miles-vl-qwen38-01"
   },
   "secrets": ["wandb-api"]
 }
@@ -53,19 +54,21 @@ Two validated examples live in [`launch/rl1/examples/`](launch/rl1/examples/):
 |---|---|---|
 | `name` | run, RayJob, SFS dir, and WandB group name | DNS-safe label |
 | `image` | trainer image from the build step | |
-| `workers` | GPU pods, head included | >= 1 |
+| `command` | the training invocation, run on the head after the boot phase | no apostrophes; must agree with env (`--mode`, `--model-name`, `--num-nodes`) |
+| `workers` | GPU pods, head included | >= 1; must equal the command's `--num-nodes` |
 | `gpus_per_worker` | GPUs per pod | 1..8 |
-| `env.MODEL_NAME` | recipe row in `launch/run_fleet.py` | `glm4.7-flash` or `qwen3.8-27b` |
-| `env.TASKSET_REF` | v2-registry taskset | |
-| `env.MODE` | `normal`, `debug_minimal`, `rollout_only` | |
-| `env.TASK_LIMIT` | task sample cap | "0" = whole taskset |
-| `env.MAX_TURNS` | episode turn cap | |
+| `env.MODEL_NAME` | recipe row in `launch/run_fleet.py`; also selects node pool and memory sizing | `glm4.7-flash` or `qwen3.8-27b` |
+| `env.TASKSET_REF` | v2-registry taskset the boot phase pulls | |
+| `env.MODE` | declared run type | `normal`, `debug_minimal`, `rollout_only` |
+| `env.TASK_LIMIT` | task sample cap for the dataset build | "0" = whole taskset |
+| `env.RUN_ID` | must equal `name` | |
 | `secrets` | extra pre-created secrets mounted as env | `wandb-api` always included |
 
-There is no `command` field: the training command is composed from the
-MODEL_NAME recipe row, and node placement plus memory sizing are model facts
-the submitter derives (GLM → H200 pool; the 27B → B200 pool, 179GB/GPU,
-1900Gi host limit for `offload_train`).
+The boot phase (taskset pull, dataset build, env-image pre-pull, model prep)
+is fixed in the RayJob template and consumes the env knobs; `command` is
+what runs after it. Node placement and memory sizing are model facts the
+submitter derives from MODEL_NAME (GLM → H200 pool; the 27B → B200 pool,
+179GB/GPU, 1900Gi host limit for `offload_train`).
 
 ## 3. One-time setup
 

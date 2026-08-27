@@ -93,21 +93,7 @@ spec:
       --num-gpus-per-node ${NUM_GPUS}
     flock -u 9
 
-    exec python examples/fleet/launch/run_fleet.py \
-      --model-name ${MODEL_NAME} \
-      --run-id "${JOB_NAME}" \
-      --mode ${MODE} \
-      --skip-prepare \
-      --dataset-dir "$RUN_DIR/data" \
-      --model-dir "$MODEL_DIR" \
-      --data-dir "$RUN_DIR" \
-      --output-dir /mnt/sfs/miles-fleet \
-      --num-nodes ${NUM_NODES} \
-      --num-gpus-per-node ${NUM_GPUS} \
-      --rollout-batch-size ${ROLLOUT_BATCH} \
-      --n-samples-per-prompt ${N_SAMPLES} \
-      --max-turns ${MAX_TURNS} \
-      --max-concurrent-envs ${CONCURRENCY} ${SCRIPT_EXTRA}
+    exec ${COMMAND}
     '
   submitterPodTemplate:
     spec:

@@ -42,10 +42,11 @@ bash examples/fleet/launch/rl1/build_image.sh fleet-integration
 ./examples/fleet/launch/rl1/submit_run.py examples/fleet/launch/rl1/examples/vision-qwen38-27b.json
 ```
 
-The payload carries five run knobs (`MODEL_NAME`, `TASKSET_REF`, `MODE`,
-`TASK_LIMIT`, `MAX_TURNS`) plus `workers`/`gpus_per_worker`; node placement
-and memory sizing follow the model. Every run is a RayJob gang-admitted by
-Kueue. Full operational detail: [RUNBOOK.md](RUNBOOK.md).
+The payload carries an explicit `command` (the training invocation), five
+env knobs (`MODEL_NAME`, `TASKSET_REF`, `MODE`, `TASK_LIMIT`, `RUN_ID`),
+and `workers`/`gpus_per_worker`; node placement and memory sizing follow
+the model. Every run is a RayJob gang-admitted by Kueue. Full operational
+detail: [RUNBOOK.md](RUNBOOK.md).
 
 Watch a run:
 

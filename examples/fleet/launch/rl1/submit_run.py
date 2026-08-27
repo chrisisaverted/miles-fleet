@@ -12,21 +12,22 @@ it. `--dry-run` prints the manifest instead of applying.
 Payload fields:
     name             run and RayJob name; also the SFS and WandB group name
     image            ghcr.io/fleet-ai/miles-fleet/trainer:<sha>
+    command          the training invocation, executed on the head after the
+                     boot phase (taskset pull, dataset build, env-image
+                     pre-pull, model prep). No apostrophes: the entrypoint is
+                     single-quoted.
     workers          number of GPU pods (head included); >= 1
     gpus_per_worker  1..8
-    env              the five run knobs:
-                       MODEL_NAME    recipe row in launch/run_fleet.py
+    env              the five boot/run knobs:
+                       MODEL_NAME    recipe row in launch/run_fleet.py; also
+                                     selects node pool and memory sizing
                        TASKSET_REF   registry-alpha taskset reference
                        MODE          normal | debug_minimal | rollout_only
                        TASK_LIMIT    task sample cap; "0" = whole taskset
-                       MAX_TURNS     episode turn cap
+                       RUN_ID        must equal name
     secrets          extra pre-created secrets to mount as env (wandb-api is
                      always included; the per-run Fleet credentials secret is
                      created by this script because the token expires)
-
-Unlike the skyrl payload there is no `command`: the training command is
-composed from the MODEL_NAME recipe row, and the node pool plus memory
-sizing follow the model (see _MODEL_PLACEMENT).
 """
 
 import argparse
@@ -41,7 +42,7 @@ from pathlib import Path
 KUBECTL = ["kubectl", "--context", "fleet-training-rl1-us-east-1", "-n", "fleet-train-jobs"]
 HERE = Path(__file__).resolve().parent
 
-REQUIRED_ENV = ("MODEL_NAME", "TASKSET_REF", "MODE", "TASK_LIMIT", "MAX_TURNS")
+REQUIRED_ENV = ("MODEL_NAME", "TASKSET_REF", "MODE", "TASK_LIMIT", "RUN_ID")
 
 # The node pool and memory sizing are model facts, not run knobs: the 27B
 # needs the B200s (179GB/GPU; its full-context train step is ~134GB/rank) and
@@ -63,7 +64,7 @@ def _fail(msg: str) -> None:
 
 def _load_payload(path: str) -> dict:
     payload = json.loads(Path(path).read_text())
-    for field in ("name", "image", "workers", "gpus_per_worker", "env"):
+    for field in ("name", "image", "command", "workers", "gpus_per_worker", "env"):
         if field not in payload:
             _fail(f"payload is missing '{field}'")
     if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,50}[a-z0-9])?", payload["name"]):
@@ -79,6 +80,17 @@ def _load_payload(path: str) -> dict:
         _fail(f"unknown MODEL_NAME {payload['env']['MODEL_NAME']!r}; known: {sorted(_MODEL_PLACEMENT)}")
     if payload["env"]["MODE"] not in ("normal", "debug_minimal", "rollout_only"):
         _fail("MODE must be normal | debug_minimal | rollout_only")
+    if payload["env"]["RUN_ID"] != payload["name"]:
+        _fail("env.RUN_ID must equal name (it names the SFS dir and WandB group)")
+    if "'" in payload["command"]:
+        _fail("command must not contain apostrophes (the RayJob entrypoint is single-quoted)")
+    for token in (
+        f"--mode {payload['env']['MODE']}",
+        f"--model-name {payload['env']['MODEL_NAME']}",
+        f"--num-nodes {payload['workers']}",
+    ):
+        if token not in payload["command"]:
+            _fail(f"command does not contain '{token}' declared in env")
     return payload
 
 
@@ -91,16 +103,10 @@ def _render(payload: dict) -> str:
         "IMAGE": payload["image"],
         "TASKSET_REMOTE_REF": env["TASKSET_REF"],
         "MODEL_NAME": env["MODEL_NAME"],
-        "MODE": env["MODE"],
         "TASK_LIMIT": str(env["TASK_LIMIT"]),
-        "MAX_TURNS": str(env["MAX_TURNS"]),
-        "NUM_NODES": str(payload["workers"]),
+        "COMMAND": payload["command"],
         "WORKER_REPLICAS": str(payload["workers"] - 1),
         "NUM_GPUS": str(payload["gpus_per_worker"]),
-        "ROLLOUT_BATCH": str(env.get("ROLLOUT_BATCH", 8)),
-        "N_SAMPLES": str(env.get("N_SAMPLES", 8)),
-        "CONCURRENCY": str(env.get("CONCURRENCY", 8)),
-        "SCRIPT_EXTRA": env.get("SCRIPT_EXTRA", ""),
         **placement,
     }
     template = (HERE / "rayjob.yaml.tmpl").read_text()
