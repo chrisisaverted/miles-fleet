@@ -14,6 +14,7 @@ import pytest
 from miles.rollout.base_types import GenerateFnInput
 from miles.utils.types import Sample
 
+import examples.fleet.recording as recording_mod
 import examples.fleet.rollout as rollout_mod
 from examples.fleet.session import GradeResult, StepAdvanceInfo, ToolOutcome
 
@@ -216,11 +217,11 @@ def run_generate(monkeypatch, session: FakeFleetSession, script: List[Any], args
     state = StubState(args)
     state.aborted = aborted
     monkeypatch.setattr(rollout_mod, "FleetSession", lambda *a, **k: session)
-    monkeypatch.setattr(rollout_mod, "post", make_post(script, state.tokenizer))
+    monkeypatch.setattr(recording_mod, "post", make_post(script, state.tokenizer))
     monkeypatch.setattr(rollout_mod, "_SWEPT", True)
     monkeypatch.setattr(rollout_mod, "_ENV_SEMAPHORE", None)
     monkeypatch.setattr(rollout_mod, "_PREPARE_SEMAPHORE", None)
-    monkeypatch.setattr(rollout_mod, "_tito_for", lambda state_, args_: FakeTito(state_.tokenizer))
+    monkeypatch.setattr(recording_mod, "_tito_for", lambda state_, args_: FakeTito(state_.tokenizer))
     sample = Sample(prompt=[{"role": "user", "content": "row prompt"}], metadata={"taskset_ref": "ts", "task_key": "t1"})
     fn_input = GenerateFnInput(state=state, sample=sample, sampling_params={"max_new_tokens": 64}, evaluation=False)
     output = asyncio.run(rollout_mod.generate(fn_input))
@@ -477,11 +478,11 @@ def run_generate_vision(monkeypatch, session, script, args=None):
             },
         }
 
-    monkeypatch.setattr(rollout_mod, "post", capturing_post)
+    monkeypatch.setattr(recording_mod, "post", capturing_post)
     monkeypatch.setattr(rollout_mod, "_SWEPT", True)
     monkeypatch.setattr(rollout_mod, "_ENV_SEMAPHORE", None)
     monkeypatch.setattr(rollout_mod, "_PREPARE_SEMAPHORE", None)
-    monkeypatch.setattr(rollout_mod, "_tito_for", lambda state_, args_: FakeTito(state_.tokenizer))
+    monkeypatch.setattr(recording_mod, "_tito_for", lambda state_, args_: FakeTito(state_.tokenizer))
     sample = Sample(prompt=[{"role": "user", "content": "row"}], metadata={"taskset_ref": "ts", "task_key": "t1"})
     fn_input = GenerateFnInput(state=state, sample=sample, sampling_params={"max_new_tokens": 64}, evaluation=False)
     output = asyncio.run(rollout_mod.generate(fn_input))

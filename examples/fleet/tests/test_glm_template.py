@@ -15,7 +15,8 @@ import pytest
 
 from miles.utils.chat_template_utils.tito_tokenizer import get_tito_tokenizer
 
-from examples.fleet.rollout import _append_messages, _build_messages, _record_assistant, _Segment, _start_segment
+from examples.fleet.agent import build_messages
+from examples.fleet.recording import _append_messages, _record_assistant, _Segment
 from miles.utils.types import Sample
 
 pytestmark = pytest.mark.network
@@ -43,7 +44,7 @@ TOOLS = [
 
 
 def make_segment(tito):
-    messages = _build_messages("count the rows", _FakeArgs(), 1, 1)
+    messages = build_messages("count the rows", 32, 1, 1)
     sample = Sample(prompt=list(messages), metadata={})
     prompt_ids = tito.apply_chat_template(messages, add_generation_prompt=True, tools=TOOLS, tokenize=True)
     sample.tokens = list(prompt_ids)
@@ -52,10 +53,6 @@ def make_segment(tito):
     sample.loss_mask = []
     sample.rollout_log_probs = []
     return _Segment(sample=sample, messages=messages, prompt_len=len(prompt_ids))
-
-
-class _FakeArgs:
-    fleet_max_turns = 32
 
 
 def simulate_generation(tito, segment, text, tool_call=None, stop_token="<|observation|>"):

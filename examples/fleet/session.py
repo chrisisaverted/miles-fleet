@@ -1,7 +1,7 @@
 """FleetSession: one Fleet v2 platform attempt, driven synchronously.
 
 The session speaks the fleet-runtime SDK on one side and plain Python types on
-the other; it knows nothing about miles. The rollout (examples.fleet.rollout)
+the other; it knows nothing about miles. The agent loop (examples.fleet.agent)
 calls every method through asyncio.to_thread because the SDK blocks on docker.
 
 Lifecycle:

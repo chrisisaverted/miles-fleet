@@ -15,7 +15,7 @@ import pytest
 from miles.utils.chat_template_utils.tito_tokenizer import get_tito_tokenizer
 from miles.utils.types import Sample
 
-from examples.fleet.rollout import _append_multimodal, _boundary_fix, _Segment
+from examples.fleet.recording import _append_multimodal, _boundary_fix, _Segment
 
 pytestmark = pytest.mark.network
 
