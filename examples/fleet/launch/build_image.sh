@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build + push the miles-fleet trainer image ON the rl1 builder node
-# (Job + dind), mirroring skyrl-fleet-v2's proven in-cluster build path.
+# Build + push the miles-fleet trainer image in-cluster (Job + dind) on the
+# B300 cluster.
 #
 # Usage: ./build_image.sh [git-ref]   (default: fleet-integration)
 # The builder reuses the cluster's img-build-secrets (GH_TOKEN with
 # fleet-ai/platform read + ghcr push); no local token needed when it exists.
 set -euo pipefail
 
-KUBE_CONTEXT="${KUBE_CONTEXT:-fleet-training-rl1-us-east-1}"
+KUBE_CONTEXT="${KUBE_CONTEXT:-nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6}"
 KUBECTL=(kubectl --context "$KUBE_CONTEXT" -n fleet-train-jobs)
 REPO_DIR="$(cd "$(dirname "$0")/../../../.." && pwd)"
 REF="${1:-fleet-integration}"

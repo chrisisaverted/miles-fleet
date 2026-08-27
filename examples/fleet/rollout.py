@@ -4,7 +4,7 @@ Wire with:
     --custom-generate-function-path examples.fleet.rollout.generate
     --prompt-data <prepared>.jsonl --input-key input --metadata-key metadata
     --dynamic-sampling-filter-path miles.rollout.filter_hub.dynamic_sampling_filters.check_no_aborted
-    --fleet-tito-model glm47   (per model family; miles --tito-model values)
+    --fleet-tito-model qwen35  (per model family; miles --tito-model values)
 
 Each dataset row's metadata carries the task identity (taskset_ref, task_key);
 all behavior knobs are --fleet-* args registered via generate.add_arguments.
@@ -184,7 +184,7 @@ def _add_arguments(parser: argparse.ArgumentParser):
         "--fleet-tito-model",
         type=str,
         default="default",
-        help="miles TITO tokenizer family (--tito-model values): glm47, qwen3_5, kimi25, ...",
+        help="miles TITO tokenizer family (--tito-model values): qwen35, kimi25, ...",
     )
     parser.add_argument(
         "--fleet-vision",

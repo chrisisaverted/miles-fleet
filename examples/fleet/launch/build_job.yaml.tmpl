@@ -1,7 +1,7 @@
 # In-cluster trainer-image build (rendered by build_image.sh via envsubst).
-# One pod on the builder node: dind native-sidecar daemon + docker CLI client
-# that clones fleet-ai/miles-fleet at ${REF}, builds the rl1 Dockerfile,
-# pushes to ghcr.
+# One pod: dind native-sidecar daemon + docker CLI client that clones
+# fleet-ai/miles-fleet at ${REF}, builds the trainer Dockerfile, pushes to
+# ghcr.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -17,10 +17,11 @@ spec:
       labels: {app: img-build}
     spec:
       restartPolicy: Never
-      # The H200 node, not the builder: this image unpacks to well over the
-      # builder's ~94GB ephemeral (evicted at 19 min on 2026-08-21); the p5en
-      # has ~480GB. Builds are rare and the dind storage dies with the pod.
-      nodeSelector: {workload: gpu-h200}
+      # A GPU node, not the CPU pool: the image unpacks to well over 100GB
+      # (a ~94GB-ephemeral builder was evicted at 19 min on 2026-08-21); the
+      # GPU nodes have ~956GB ephemeral. The pod requests no GPUs; builds are
+      # rare and the dind storage dies with the pod.
+      nodeSelector: {workload: fleetai-training-ng-gpu}
       tolerations:
         - {key: workload, operator: Exists, effect: NoSchedule}
       volumes:
@@ -60,7 +61,7 @@ spec:
               echo "${GH_TOKEN}" | docker login ghcr.io -u x --password-stdin
               docker pull "ghcr.io/fleet-ai/miles-fleet/trainer:${CACHE_TAG}" >/dev/null 2>&1 || true
               export GH_TOKEN
-              DOCKER_BUILDKIT=1 docker build -f examples/fleet/launch/rl1/Dockerfile \
+              DOCKER_BUILDKIT=1 docker build -f examples/fleet/launch/Dockerfile \
                 --cache-from "ghcr.io/fleet-ai/miles-fleet/trainer:${CACHE_TAG}" \
                 --secret id=gh_token,env=GH_TOKEN \
                 -t "ghcr.io/fleet-ai/miles-fleet/trainer:${SHA}" \

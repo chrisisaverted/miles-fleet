@@ -1,27 +1,29 @@
 """GRPO on Fleet v2 tasksets — one launcher, recipes keyed by --model-name.
 
-Follows the miles convention (run_qwen3_dense.py): near-duplicate recipes
-merge behind a frozen _Recipe table; the model-coupled blocks (Megatron
-parallelism, sglang engine flags, TITO tokenizer family, checkpoint
-conversion type) come from the row, the Fleet rollout block is shared.
+Follows the miles convention (run_qwen3_dense.py): recipes live in a frozen
+_Recipe table; the model-coupled blocks (engine flags, TITO tokenizer family,
+chat template) come from the row, the Fleet rollout block is shared.
 
     python examples/fleet/launch/run_fleet.py \
-        --model-name glm4.7-flash --dataset-dir <dir> --run-id <name>
+        --model-name qwen3.8-27b --dataset-dir <dir> --run-id <name>
 
 Rows:
-    glm4.7-flash     validated end-to-end with the Fleet connector (2026-08)
+    qwen3.8-27b      vision-capable; validated end-to-end with the Fleet
+                     connector on text (ade-bench) and GUI (evaluation-
+                     benchmark) tasksets (2026-08)
 
 Deviations from the stock recipes, each with its reason:
+- FSDP backend, not Megatron: miles's Megatron qwen3_5 spec is language-only
+  (docs: "trains the text path only"); FSDP trains the full HF model
+  including the vision towers, with no torch_dist conversion.
 - rollout block targets a prepared Fleet JSONL (see ../prepare_dataset.py).
 - --use-rollout-routing-replay is OFF: update_sample_from_response assigns
   (not concatenates) routed experts per turn, so multi-turn replay data would
   be wrong-shaped (upstream TODO in generate_endpoint_utils.py).
 - --dynamic-sampling-filter-path check_no_aborted: docker-crashed or
   timed-out episodes reject their group instead of training on it.
-- --async-save --use-persistent-ckpt-worker: a synchronous 30-minute SFS save
-  both stalls training and starves co-located env boots (measured 2026-08-22).
 - prepare() is idempotent (Path.exists) so concurrent jobs share one
-  converted checkpoint under the launch manifest's flock.
+  downloaded model under the launch manifest's flock.
 """
 
 from dataclasses import dataclass
@@ -32,27 +34,19 @@ import typer
 
 import miles.utils.external_utils.command_utils as U
 
-ModelName = Literal["glm4.7-flash", "qwen3.8-27b"]
+ModelName = Literal["qwen3.8-27b"]
 
 
 @dataclass(frozen=True)
 class _Recipe:
     hf_org: str
     hf_name: str
-    megatron_model_type: str  # unused when backend == "fsdp"
     tito_model: str
-    # perf/parallelism (expert parallel is min(8, num_gpus) at compose time,
-    # so sub-node runs work; the stock recipes assume a full 8-GPU node)
-    tp: int
-    cp: int
     max_tokens_per_gpu: int
-    # rollout engine: GPUs per sglang engine (None => one engine spanning
-    # all GPUs; GLM-4.7-Flash fits TP1 on H200)
+    # rollout engine: GPUs per sglang engine (None => one engine spanning all)
     rollout_gpus_per_engine: int | None
     sglang_extra: str
     train_extra: str
-    backend: str = "megatron"  # "megatron" | "fsdp" (fsdp trains the full HF
-    # model incl. vision towers; no torch_dist conversion)
     vision: bool = False  # screenshots into engine payload + train inputs
     sglang_mem_fraction: float = 0.7
     max_response_len: int = 24576
@@ -63,45 +57,20 @@ class _Recipe:
 
 
 _RECIPES: dict[str, _Recipe] = {
-    # as validated on rl1 (miles-train-ade / miles-train-evalbench)
-    "glm4.7-flash": _Recipe(
-        hf_org="zai-org",
-        hf_name="GLM-4.7-Flash",
-        megatron_model_type="glm4.7-flash",
-        tito_model="glm47",
-        tp=4,
-        cp=1,
-        max_tokens_per_gpu=32768,
-        rollout_gpus_per_engine=1,
-        sglang_extra=(
-            "--sglang-speculative-algorithm EAGLE "
-            "--sglang-speculative-num-steps 2 "
-            "--sglang-speculative-eagle-topk 1 "
-            "--sglang-speculative-num-draft-tokens 3 "
-        ),
-        train_extra="",
-    ),
-    # Vision-capable (Qwen3_5ForConditionalGeneration): FSDP backend, since
-    # miles's Megatron qwen3_5 spec is language-only (docs: "trains the text
-    # path only"). Engine TP=1 (sglang TP>1 garbage for this family on the
-    # pinned version, sglang#21039).
-    # Sized for the B200 node (179GB usable/GPU, measured 2026-08-25): ~65GB
-    # fixed (params+grads+Adam fp32 on GPU) + ~70GB activations at the full
-    # 30720 context leave ~44GB headroom — no cpu offload (its engine-resume
-    # bug is reproduced in pure miles; fix pending upstream).
-    # Launch with NODE_WORKLOAD=gpu-b200 INSTANCE_TYPE=p6-b200.48xlarge.
+    # Vision-capable (Qwen3_5ForConditionalGeneration). Engine TP=1 (sglang
+    # TP>1 garbage for this family on the pinned version, sglang#21039).
+    # Memory at the full 30720 context: ~65GB fixed per rank (params + grads
+    # + Adam fp32) + ~70GB activations (measured 2026-08-25) — fits a B300's
+    # 268GB per GPU with wide headroom and no cpu offload (the offload's
+    # engine-resume bug is reproduced in pure miles; fix pending upstream).
     "qwen3.8-27b": _Recipe(
         hf_org="Qwen",
         hf_name="Qwen3.8-27B",
-        megatron_model_type="",
         tito_model="qwen35",
-        backend="fsdp",
         vision=True,
         sglang_mem_fraction=0.8,
         max_response_len=24576,
         max_context_len=30720,
-        tp=1,
-        cp=1,
         max_tokens_per_gpu=9216,
         rollout_gpus_per_engine=1,
         # triton, not fa3/flashinfer: fa3 is Hopper-only (SM<=90 assertion),
@@ -124,7 +93,7 @@ _RECIPES: dict[str, _Recipe] = {
 
 @dataclass
 class ScriptArgs(U.ExecuteTrainConfig):
-    model_name: ModelName = "glm4.7-flash"
+    model_name: ModelName = "qwen3.8-27b"
     mode: Literal["normal", "debug_minimal", "rollout_only"] = "normal"
     run_id: str = U.create_run_id()
     dataset_dir: str = "/root/datasets/fleet/ade-bench"
@@ -139,7 +108,6 @@ class ScriptArgs(U.ExecuteTrainConfig):
     extra_args: str = ""
     data_dir: str = "/root/datasets"
     model_dir: str = "/root/models"
-    megatron_path: str = "/root/Megatron-LM"
 
     @property
     def recipe(self) -> _Recipe:
@@ -148,23 +116,13 @@ class ScriptArgs(U.ExecuteTrainConfig):
 
 def prepare(args: ScriptArgs):
     """Idempotent: skips work whose output already exists, so concurrent jobs
-    serialized by the launch manifest's flock share one prepared model."""
+    serialized by the launch manifest's flock share one downloaded model.
+    FSDP loads the HF checkpoint directly; there is no conversion step."""
     recipe = args.recipe
     hf_dir = Path(args.model_dir) / recipe.hf_name
     U.exec_command_cpu(f"mkdir -p {args.model_dir} {args.data_dir}")
     if not (hf_dir / "config.json").exists():
         U.exec_command_cpu(f"hf download {recipe.hf_org}/{recipe.hf_name} --local-dir {hf_dir}")
-    if recipe.backend == "fsdp":
-        return  # FSDP loads the HF checkpoint directly; no conversion
-    if not (Path(args.model_dir) / f"{recipe.hf_name}_torch_dist").exists():
-        U.convert_checkpoint(
-            model_name=recipe.hf_name,
-            megatron_model_type=recipe.megatron_model_type,
-            num_gpus_per_node=args.num_gpus_per_node,
-            dir_dst=args.model_dir,
-            hf_checkpoint=str(hf_dir),
-            megatron_path=args.megatron_path,
-        )
 
 
 def execute(args: ScriptArgs):
@@ -183,25 +141,17 @@ def execute(args: ScriptArgs):
     else:
         fixed_template_path, _ = resolve_fixed_chat_template(recipe.tito_model)
     hf_path = f"{args.model_dir}/{recipe.hf_name}"
-    ref_load_path = hf_path if recipe.backend == "fsdp" else f"{hf_path}_torch_dist"
     load_save_path = f"{args.output_dir}/{args.run_id}/checkpoints"
     debug = args.mode == "debug_minimal"
     few_steps = args.mode != "normal"
 
     ckpt_args = (
         f"--hf-checkpoint {hf_path} "
-        f"--ref-load {ref_load_path} "
+        f"--ref-load {hf_path} "
         f"--load {load_save_path} "
         f"--save {load_save_path} "
         f"--save-interval {2 if debug else 20} "
     )
-    if recipe.backend == "megatron":
-        # Megatron-only checkpoint flags: retention pruning and the async
-        # save worker pair (the FSDP parser rejects them)
-        ckpt_args += (
-            f"--save-retain-interval {2 if debug else 20} "
-            "--async-save --use-persistent-ckpt-worker "
-        )
 
     fleet_args = (
         f"{f'--chat-template-path {fixed_template_path} ' if fixed_template_path else ''}"
@@ -236,32 +186,17 @@ def execute(args: ScriptArgs):
         f"{fleet_args}"
     )
 
-    if recipe.backend == "fsdp":
-        perf_args = (
-            "--train-backend fsdp "
-            "--gradient-checkpointing "
-            "--update-weight-buffer-size 536870912 "
-            # sdpa, not flash_attention_3: FA3 kernels are Hopper-only; sdpa
-            # routes to cuDNN's Blackwell kernels in torch 2.11+cu129
-            "--attn-implementation sdpa "
-            """--train-env-vars '{"PYTORCH_CUDA_ALLOC_CONF":"expandable_segments:True"}' """
-            "--use-dynamic-batch-size "
-            f"--max-tokens-per-gpu {recipe.max_tokens_per_gpu} "
-        )
-    else:
-        perf_args = (
-            f"--tensor-model-parallel-size {recipe.tp} "
-            "--sequence-parallel "
-            "--pipeline-model-parallel-size 1 "
-            f"--context-parallel-size {recipe.cp} "
-            f"--expert-model-parallel-size {min(8, args.num_gpus_per_node)} "
-            "--expert-tensor-parallel-size 1 "
-            "--recompute-granularity full "
-            "--recompute-method uniform "
-            "--recompute-num-layers 1 "
-            "--use-dynamic-batch-size "
-            f"--max-tokens-per-gpu {recipe.max_tokens_per_gpu} "
-        )
+    perf_args = (
+        "--train-backend fsdp "
+        "--gradient-checkpointing "
+        "--update-weight-buffer-size 536870912 "
+        # sdpa, not flash_attention_3: FA3 kernels are Hopper-only; sdpa
+        # routes to cuDNN's Blackwell kernels in torch 2.11+cu129
+        "--attn-implementation sdpa "
+        """--train-env-vars '{"PYTORCH_CUDA_ALLOC_CONF":"expandable_segments:True"}' """
+        "--use-dynamic-batch-size "
+        f"--max-tokens-per-gpu {recipe.max_tokens_per_gpu} "
+    )
 
     grpo_args = (
         "--advantage-estimator grpo "
@@ -281,12 +216,6 @@ def execute(args: ScriptArgs):
         "--adam-beta1 0.9 "
         "--adam-beta2 0.98 "
     )
-    if recipe.backend == "megatron":
-        optimizer_args += (
-            "--optimizer-cpu-offload "
-            "--overlap-cpu-optimizer-d2h-h2d "
-            "--use-precision-aware-optimizer "
-        )
 
     engine_gpus = recipe.rollout_gpus_per_engine or args.num_gpus_per_node
     sglang_args = (
@@ -296,14 +225,6 @@ def execute(args: ScriptArgs):
     )
 
     misc_args = ""
-    if recipe.backend == "megatron":
-        misc_args += (
-            "--attention-dropout 0.0 "
-            "--hidden-dropout 0.0 "
-            "--accumulate-allreduce-grads-in-fp32 "
-            "--attention-softmax-in-fp32 "
-            "--attention-backend flash "
-        )
     if args.num_nodes > 1:
         # The rollout manager drives env containers over DOCKER_HOST; only
         # the head pod carries the dind sidecar and flt store.
@@ -335,8 +256,7 @@ def execute(args: ScriptArgs):
         train_args=train_args,
         config=args,
         num_gpus_per_node=args.num_gpus_per_node,
-        megatron_model_type=recipe.megatron_model_type if recipe.backend == "megatron" else None,
-        megatron_path=args.megatron_path,
+        megatron_model_type=None,
     )
 
 

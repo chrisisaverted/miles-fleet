@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Submit a Fleet training run to rl1 from a run payload JSON.
+"""Submit a Fleet training run from a run payload JSON.
 
 Stand-in for POST /v1/runs: a run is a name, an image, a command, how many
 GPUs, and env variables. The platform side (this script plus the RayJob
@@ -7,7 +7,7 @@ template) owns placement, env and secret injection, the SFS log/trace
 location, queueing, and lifecycle; the code side lives in the image and is
 whatever `command` invokes.
 
-    ./submit_run.py examples/vision-qwen38-27b.json
+    ./submit_run.py examples/vision-qwen38-27b-2node.json
     ./submit_run.py my-run.json --dry-run
 
 Payload:
@@ -21,8 +21,7 @@ Payload:
     secrets          pre-created k8s secrets mounted as env (wandb-api is
                      always included; a per-run Fleet credentials secret is
                      created here because the token expires)
-    pool             optional placement override: gpu-b300 (default; the
-                     Nebius cluster), gpu-b200, or gpu-h200 (rl1, legacy).
+    pool             optional; defaults to gpu-b300, currently the only pool.
 """
 
 import argparse
@@ -37,17 +36,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 # A pool names a set of identical GPU machines and the cluster that hosts
-# them. rl1 pools live on the AWS emulation cluster; gpu-b300 is the Nebius
-# production cluster (24 x 8 B300, 268GB per GPU, 2.7TB host RAM).
+# them. gpu-b300 is the Nebius production cluster (fleetai-training,
+# 24 x 8 B300, 268GB per GPU, 2.7TB host RAM, InfiniBand between machines).
 _POOLS = {
-    "gpu-b200": dict(
-        KUBE_CONTEXT="fleet-training-rl1-us-east-1", CPU_WORKLOAD="infra",
-        NODE_WORKLOAD="gpu-b200", INSTANCE_TYPE="p6-b200.48xlarge", MAIN_MEM="1500Gi", MAIN_MEM_LIM="1900Gi",
-    ),
-    "gpu-h200": dict(
-        KUBE_CONTEXT="fleet-training-rl1-us-east-1", CPU_WORKLOAD="infra",
-        NODE_WORKLOAD="gpu-h200", INSTANCE_TYPE="p5en.48xlarge", MAIN_MEM="925Gi", MAIN_MEM_LIM="1300Gi",
-    ),
     "gpu-b300": dict(
         KUBE_CONTEXT="nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6", CPU_WORKLOAD="fleetai-training-ng-cpu",
         NODE_WORKLOAD="fleetai-training-ng-gpu", INSTANCE_TYPE="gpu-b300-sxm", MAIN_MEM="1500Gi", MAIN_MEM_LIM="2400Gi",

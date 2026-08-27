@@ -1,4 +1,4 @@
-# miles trainer image for Fleet training on rl1.
+# miles trainer image for Fleet training.
 #
 # Base is the official miles image (pinned sglang/Megatron/kernels). The cu12
 # variant matches the cluster's driver generation. On top: this repo's tree
@@ -7,7 +7,7 @@
 # taskset schema), and a docker CLI (the daemon is the pod's dind sidecar).
 #
 # Build from the REPO ROOT with a token that reads fleet-ai/platform:
-#   DOCKER_BUILDKIT=1 docker build -f examples/fleet/launch/rl1/Dockerfile \
+#   DOCKER_BUILDKIT=1 docker build -f examples/fleet/launch/Dockerfile \
 #     --secret id=gh_token,env=GH_TOKEN .
 
 FROM golang:1.26 AS flt-builder

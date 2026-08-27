@@ -1,10 +1,8 @@
-# Fleet training RayJob for rl1, every node count (rendered by
-# submit_run.py; do not kubectl-apply directly). workers=1 is a head with
-# zero worker pods.
+# Fleet training RayJob, every node count (rendered by submit_run.py; do
+# not kubectl-apply directly). workers=1 is a head with zero worker pods.
 #
-# Shape mirrors the cluster's proven RayJob pattern (skyrl-fleet-v2 rl1):
-# Kueue label + suspend:true, a submitter on infra, and the entrypoint running
-# on the head. Deltas for miles:
+# Shape: Kueue label + suspend:true, a submitter on a CPU node, and the
+# entrypoint running on the head. Deltas for miles:
 #   * the head is a GPU pod (miles colocates trainer + engines on every GPU),
 #     with the dind sidecar and flt store, because the rollout manager is
 #     pinned to the head (--pin-rollout-manager-to-head) and drives the

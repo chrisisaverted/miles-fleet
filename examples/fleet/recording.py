@@ -9,9 +9,9 @@ ever carries screenshots, this module is what it replaces.
 The assembly is token-in-token-out: sampled token ids come back from
 /generate and are appended verbatim (loss mask 1); observation messages are
 tokenized incrementally by miles's TITO tokenizer (loss mask 0), whose
-per-family subclasses own the boundary quirks (GLM's ambiguous
-<|user|>/<|observation|> stop tokens, Qwen's missing newline) and the
-keep-thinking template kwargs. History is never re-rendered.
+per-family subclasses own the boundary quirks (e.g. Qwen's missing newline
+at the assistant/observation junction) and the keep-thinking template
+kwargs. History is never re-rendered.
 
 One episode can hold several training sequences (_Segment): a reset boundary
 ends the current conversation and opens a fresh one, so finalize() returns
@@ -141,7 +141,8 @@ def _data_urls_to_pil(urls: List[str]) -> List[Any]:
 def _boundary_fix(tito, sample: Sample) -> None:
     """Apply the TITO family's junction rule to the sampled tail before an
     out-of-band (processor-based) append. Mirrors merge_tokens: Qwen inserts
-    the newline its models stop before; GLM trims its ambiguous stop token."""
+    the newline its models stop before; families whose stop token is
+    ambiguous at the junction trim it instead."""
     tokens = sample.tokens
     im_end = getattr(tito, "_im_end_id", None)
     if im_end is not None and tokens and tokens[-1] == im_end:
