@@ -9,7 +9,7 @@ set -euo pipefail
 
 KUBE_CONTEXT="${KUBE_CONTEXT:-nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6}"
 KUBECTL=(kubectl --context "$KUBE_CONTEXT" -n fleet-train-jobs)
-REPO_DIR="$(cd "$(dirname "$0")/../../../.." && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 REF="${1:-fleet-integration}"
 SHA=$(git -C "$REPO_DIR" rev-parse --short=8 "$REF")
 CACHE_TAG="${CACHE_TAG:-latest}"
