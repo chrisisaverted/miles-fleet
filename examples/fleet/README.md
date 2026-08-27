@@ -118,5 +118,5 @@ Failures seen so far, with the fix that worked:
 | `FlashAttention v3 Backend requires SM>=80 and SM<=90` | fa3 on a Blackwell node | recipe uses `triton` on B200 |
 | `torch.OutOfMemoryError` in `loss.backward` | train step does not fit the GPU | run the 27B on B200; do not "fix" with `--fsdp-cpu-offload` (next row) |
 | `torch_memory_saver ... resume ... out of memory`, engines die after a train step | `--fsdp-cpu-offload` with `--colocate` | remove the flag (upstream miles bug) |
-| `ray ... OutOfMemoryError ... node running low on memory` | host RAM during rollouts (~1.15TB for the 27B) | memory is sized per model in `submit_run.py`; raise the row's limit |
+| `ray ... OutOfMemoryError ... node running low on memory` | host RAM during rollouts (~1.15TB for the 27B) | memory is sized per model in `submit_run.py` |
 | Rewards all zero plus reset warnings | `env.reset()` failing is a platform no-op, not the cause | look for parse failures or template errors instead |
