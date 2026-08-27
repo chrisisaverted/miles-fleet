@@ -413,6 +413,10 @@ async def _episode_loop(
             t0 = time.time()
             outcome = await asyncio.to_thread(session.call_tool, tool_call["name"], tool_call.get("arguments") or {})
             stats.env_time += time.time() - t0
+            if outcome.fatal:
+                # deadline expiry: the SDK call cannot be cancelled, so the
+                # episode ends here and close() tears the container down
+                raise RuntimeError(f"tool call deadline expired: {outcome.error}")
             if outcome.error:
                 stats.tool_errors += 1
                 body = f"Error: {outcome.error}"

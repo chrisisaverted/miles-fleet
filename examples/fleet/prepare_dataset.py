@@ -96,6 +96,9 @@ def split_rows(rows: list[dict], eval_fraction: float, seed: int) -> tuple[list[
     rows = list(rows)
     random.Random(seed).shuffle(rows)
     n_eval = max(1, int(len(rows) * eval_fraction)) if eval_fraction > 0 else 0
+    # the launcher always requires train.jsonl: training keeps at least one
+    # task, so a one-task set trains rather than becoming eval-only
+    n_eval = min(n_eval, len(rows) - 1)
     return rows[n_eval:], rows[:n_eval]
 
 

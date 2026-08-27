@@ -342,3 +342,40 @@ def test_constructor_requires_identity():
         FleetSession("", "t1")
     with pytest.raises(ValueError):
         FleetSession("ts", "")
+
+
+def test_call_tool_timeout_is_fatal(monkeypatch):
+    """PR review: a deadline expiry cannot cancel the SDK call, so the
+    outcome must be terminal instead of an ordinary tool error."""
+    import examples.fleet.session as S
+
+    session = S.FleetSession.__new__(S.FleetSession)
+    session.config = S.SessionConfig(call_tool_timeout_s=0.01)
+
+    class SlowChannel:
+        def call_tool(self, name, arguments):
+            import time
+            time.sleep(0.5)
+
+    session._channel = SlowChannel()
+    out = session.call_tool("t", {})
+    assert out.fatal and "exceeded" in (out.error or "")
+
+
+def test_prepare_retry_sweeps_between_attempts(monkeypatch):
+    """PR review: each failed prepare attempt must clean its leftovers."""
+    import examples.fleet.session as S
+
+    sweeps = []
+    monkeypatch.setattr(S, "sweep_prepare_leftovers", lambda: sweeps.append(1))
+    monkeypatch.setattr(S, "PREPARE_ATTEMPTS", 3)
+    monkeypatch.setattr(S.time, "sleep", lambda *_: None)
+
+    class FailingRuntime:
+        def prepare(self, task, source):
+            raise RuntimeError("docker slow")
+
+    import pytest
+    with pytest.raises(RuntimeError, match="after 3 attempts"):
+        S._prepare_with_retry(FailingRuntime(), task=None, source=None, task_key="t")
+    assert len(sweeps) == 3

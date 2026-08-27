@@ -96,6 +96,12 @@ class ToolOutcome:
     text: str
     images: List[str] = field(default_factory=list)  # data URLs
     error: Optional[str] = None
+    # A deadline expiry cannot cancel the underlying SDK call; its worker
+    # thread stays alive until the operation returns. Continuing the episode
+    # would stack one abandoned thread per hung call, so a timeout is
+    # terminal: the caller aborts the episode and close() tears down the
+    # container, which errors the hung call out and lets its thread exit.
+    fatal: bool = False
 
 
 @dataclass(frozen=True)
@@ -132,6 +138,7 @@ def _prepare_with_retry(runtime, task, source, task_key: str):
         except Exception as e:
             last_err = e
             logger.warning("[%s] prepare attempt %d/%d failed: %s", task_key, attempt, PREPARE_ATTEMPTS, e)
+            sweep_prepare_leftovers()
             if attempt < PREPARE_ATTEMPTS:
                 time.sleep(min(PREPARE_BACKOFF_CAP_S, PREPARE_BACKOFF_BASE_S * 2 ** (attempt - 1)))
     raise RuntimeError(f"[{task_key}] prepare failed after {PREPARE_ATTEMPTS} attempts") from last_err
@@ -182,6 +189,23 @@ def _image_locators_for(root_digest: str, runtime_root: Optional[str]) -> Dict[s
     except Exception as e:
         logger.warning("image-locations plan unreadable (%s): %s", plan_path, e)
         return {}
+
+
+def sweep_prepare_leftovers() -> None:
+    """Best-effort cleanup after a failed prepare attempt: remove non-running
+    containers carrying the fleet.runtime label (a live episode's containers
+    are running, so they are never matched), then the leaked networks."""
+    try:
+        for state in ("created", "exited"):
+            out = subprocess.run(
+                ["docker", "ps", "-aq", "--filter", "label=fleet.runtime=1", "--filter", f"status={state}"],
+                capture_output=True, text=True, timeout=30,
+            )
+            for cid in out.stdout.split():
+                subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=30)
+    except Exception as e:
+        logger.warning("container sweep skipped: %s", e)
+    sweep_leaked_networks()
 
 
 def sweep_leaked_networks() -> int:
@@ -330,6 +354,8 @@ class FleetSession:
                 self.config.call_tool_timeout_s,
                 "call_tool",
             )
+        except TimeoutError as e:
+            return ToolOutcome(text="", error=str(e), fatal=True)
         except Exception as e:
             return ToolOutcome(text="", error=str(e))
 

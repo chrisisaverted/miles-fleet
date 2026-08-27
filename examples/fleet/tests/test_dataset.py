@@ -142,3 +142,12 @@ def test_split_minimum_one_eval_row():
     rows = [{"label": f"t{i}"} for i in range(3)]
     train, evals = split_rows(rows, 0.05, seed=1)
     assert len(evals) == 1 and len(train) == 2
+
+
+def test_single_task_stays_in_train():
+    """PR review: a one-task set must produce a training split (the launcher
+    always requires train.jsonl); eval may be empty."""
+    from examples.fleet.prepare_dataset import split_rows
+
+    train, eval_rows = split_rows([{"label": "only"}], eval_fraction=0.2, seed=7)
+    assert len(train) == 1 and eval_rows == []
