@@ -92,6 +92,14 @@ def _render(payload: dict) -> str:
     unresolved = sorted(set(re.findall(r"\$\{(\w+)\}", rendered)))
     if unresolved:
         _fail(f"template variables left unresolved: {unresolved}")
+    if payload["workers"] == 1:
+        # Kueue never evaluates a workload containing a zero-count podset, so
+        # a single-node run must omit the worker group entirely.
+        import yaml
+
+        doc = yaml.safe_load(rendered)
+        doc["spec"]["rayClusterSpec"]["workerGroupSpecs"] = []
+        rendered = yaml.safe_dump(doc, default_flow_style=False, sort_keys=False, width=10000)
     if payload.get("secrets"):
         extra = "".join(
             f"\n                - secretRef: {{name: {s}}}" for s in payload["secrets"] if s != "wandb-api"
