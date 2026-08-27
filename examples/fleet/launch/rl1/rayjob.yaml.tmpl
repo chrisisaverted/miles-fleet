@@ -1,0 +1,235 @@
+# Multi-node Fleet training RayJob for rl1 (rendered by launch_fleet.sh when
+# NUM_NODES > 1; do not kubectl-apply directly).
+#
+# Shape mirrors the cluster's proven RayJob pattern (skyrl-fleet-v2 rl1):
+# Kueue label + suspend:true, a submitter on infra, and the entrypoint running
+# on the head. Deltas for miles:
+#   * the head is a GPU pod (miles colocates trainer + engines on every GPU),
+#     with the dind sidecar and flt store, because the rollout manager is
+#     pinned to the head (--pin-rollout-manager-to-head) and drives the
+#     environment containers through DOCKER_HOST there. Workers are
+#     unprivileged GPU pods.
+#   * miles joins the KubeRay cluster instead of starting its own:
+#     MILES_SCRIPT_EXTERNAL_RAY=1.
+#   * GPU podsets request tier-2 topology: each node is its own tier-1
+#     (rack) domain, so a gang spanning nodes must bind at the spine.
+# torch-dist across nodes needs no address plumbing: miles's rank-0 actor
+# publishes its own node IP and port to the other ranks.
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: ${JOB_NAME}
+  namespace: fleet-train-jobs
+  labels:
+    app: miles-fleet
+    kueue.x-k8s.io/queue-name: training-lq
+  annotations:
+    fleet.ai/submitted-by: deniz@fleet.so
+spec:
+  suspend: true                      # Kueue unsuspends on gang admission
+  shutdownAfterJobFinishes: true
+  ttlSecondsAfterFinished: 86400
+  # Single-quoted bash -c: no apostrophes anywhere in the script.
+  entrypoint: |
+    bash -c '
+    set -euo pipefail
+    RUN_DIR=/mnt/sfs/miles-fleet/${JOB_NAME}
+    mkdir -p "$RUN_DIR"
+    exec > >(tee -a "$RUN_DIR/driver.log") 2>&1
+
+    mkdir -p ~/.config/fleet
+    printf "%s" "$FLEET_CREDENTIALS_B64" | base64 -d > ~/.config/fleet/credentials.json
+    chmod 600 ~/.config/fleet/credentials.json
+
+    for i in $(seq 1 90); do docker info >/dev/null 2>&1 && break; sleep 2; done
+    docker version --format "dind server: {{.Server.Version}}"
+
+    PULLED=""
+    for A in 1 2 3 4 5 6 7 8 9 10; do
+      flt pull "${TASKSET_REMOTE_REF}" taskset && { PULLED=1; break; }
+      echo "flt pull attempt $A failed, retrying"
+      sleep 30
+    done
+    test -n "$PULLED" || { echo "flt pull failed after 10 attempts"; exit 1; }
+    REPO_PATH=$(printf "%s" "${TASKSET_REMOTE_REF}" | cut -d: -f1 | sed "s#^registry-alpha.fleetai.me/##")
+    NS=$(printf "%s" "$REPO_PATH" | cut -d/ -f1)
+    NAME=$(printf "%s" "$REPO_PATH" | cut -d/ -f2)
+    ROOT=$(flt list | grep "^taskset " | tr -s " " | cut -d" " -f4)
+    ROOT_BARE=${ROOT#sha256:}
+    TOKEN=$(python -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.config/fleet/credentials.json\")))[\"registries\"][\"registry-alpha.fleetai.me\"][\"token\"])")
+    printf "%s" "$TOKEN" | docker login registry-alpha.fleetai.me --username fleet --password-stdin
+    mkdir -p ~/.flt/image-locations/sha256
+    curl -fsS --retry 10 --retry-delay 30 --retry-all-errors -H "Authorization: Bearer $TOKEN" \
+      "https://registry-alpha.fleetai.me/v1/namespaces/$NS/repositories/$NAME/versions/$ROOT/image-locations" \
+      > ~/.flt/image-locations/sha256/$ROOT_BARE.json
+    echo "image-locations plan written for $ROOT"
+
+    cd /root/miles
+    python -m examples.fleet.prepare_dataset \
+      --taskset-ref taskset --output-dir "$RUN_DIR/data" --max-tasks ${TASK_LIMIT}
+
+    python -c "import json,os; need=set(open(\"$RUN_DIR/data/images.txt\").read().split()); src=json.load(open(os.path.expanduser(\"~/.flt/image-locations/sha256/$ROOT_BARE.json\")))[\"image_sources\"]; hit=sorted(set(v[\"location\"] for k,v in src.items() if k in need)); print(chr(10).join(hit if hit else sorted(set(v[\"location\"] for v in src.values()))))" > /tmp/pull_list.txt
+    for LOC in $(cat /tmp/pull_list.txt); do
+      echo "pre-pulling $LOC"
+      PULLED=""
+      for A in 1 2 3 4 5 6 7 8 9 10; do
+        docker pull -q "$LOC" && { PULLED=1; break; }
+        echo "pull attempt $A failed for $LOC, retrying"
+        sleep 30
+      done
+      test -n "$PULLED" || { echo "pull failed after 10 attempts: $LOC"; exit 1; }
+    done
+
+    export FLEET_DOCKER_TIMEOUT_S=600
+    export MILES_SCRIPT_EXTERNAL_RAY=1
+
+    MODEL_DIR=/mnt/sfs/miles-fleet/models
+    exec 9>"$MODEL_DIR/.prep.lock"
+    flock -w 14400 9
+    python examples/fleet/launch/run_fleet.py \
+      --model-name ${MODEL_NAME} \
+      --prepare-only --model-dir "$MODEL_DIR" --data-dir "$RUN_DIR" \
+      --num-gpus-per-node ${NUM_GPUS}
+    flock -u 9
+
+    exec python examples/fleet/launch/run_fleet.py \
+      --model-name ${MODEL_NAME} \
+      --run-id "${JOB_NAME}" \
+      --mode ${MODE} \
+      --skip-prepare \
+      --dataset-dir "$RUN_DIR/data" \
+      --model-dir "$MODEL_DIR" \
+      --data-dir "$RUN_DIR" \
+      --output-dir /mnt/sfs/miles-fleet \
+      --num-nodes ${NUM_NODES} \
+      --num-gpus-per-node ${NUM_GPUS} \
+      --rollout-batch-size ${ROLLOUT_BATCH} \
+      --n-samples-per-prompt ${N_SAMPLES} \
+      --max-turns ${MAX_TURNS} \
+      --max-concurrent-envs ${CONCURRENCY} ${SCRIPT_EXTRA}
+    '
+  submitterPodTemplate:
+    spec:
+      restartPolicy: Never
+      nodeSelector: {kubernetes.io/os: linux, workload: infra}
+      tolerations:
+        - {key: workload, operator: Exists, effect: NoSchedule}
+      containers:
+        - name: ray-job-submitter
+          # Slim ray image matching the trainer image's ray (2.58.0): the
+          # submitter only runs `ray job submit`; the 30GB trainer image
+          # would fill the small infra nodes.
+          image: rayproject/ray:2.58.0-py312
+          env:
+            - {name: NVIDIA_VISIBLE_DEVICES, value: void}
+          resources:
+            requests: {cpu: 200m, memory: 512Mi, ephemeral-storage: 2Gi}
+            limits: {cpu: "1", memory: 1Gi}
+  rayClusterSpec:
+    rayVersion: "2.58.0"
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: "0.0.0.0"
+      template:
+        metadata:
+          labels: {app: miles-fleet, run: "${JOB_NAME}"}
+          annotations:
+            kueue.x-k8s.io/podset-required-topology: topology.nebius.com/tier-2
+        spec:
+          nodeSelector:
+            kubernetes.io/os: linux
+            workload: ${NODE_WORKLOAD}
+            node.kubernetes.io/instance-type: ${INSTANCE_TYPE}
+          tolerations:
+            - {key: workload, operator: Exists, effect: NoSchedule}
+          imagePullSecrets:
+            - name: ghcr-pull
+          volumes:
+            - name: sfs
+              persistentVolumeClaim: {claimName: sfs-shared}
+            - name: flt-root
+              emptyDir: {}
+            - name: dind-storage
+              emptyDir: {}
+            - name: shm
+              emptyDir: {medium: Memory, sizeLimit: 32Gi}
+          initContainers:
+            - name: sfs-init
+              image: busybox:1.36
+              securityContext: {runAsUser: 0}
+              command: ["sh", "-c", "mkdir -p /mnt/sfs/miles-fleet/${JOB_NAME} /mnt/sfs/miles-fleet/models"]
+              volumeMounts:
+                - {name: sfs, mountPath: /mnt/sfs}
+            - name: dind
+              image: docker:27-dind
+              restartPolicy: Always
+              securityContext: {privileged: true}
+              env:
+                - {name: DOCKER_TLS_CERTDIR, value: ""}
+              args:
+                - "--host=tcp://0.0.0.0:2375"
+                - "--default-address-pool"
+                - "base=10.201.0.0/16,size=24"
+                - "--feature"
+                - "containerd-snapshotter=true"
+              volumeMounts:
+                - {name: flt-root, mountPath: /root/.flt}
+                - {name: sfs, mountPath: /mnt/sfs}
+                - {name: dind-storage, mountPath: /var/lib/docker}
+              resources:
+                requests: {cpu: "8", memory: 16Gi}
+                limits: {memory: 24Gi}
+          containers:
+            - name: ray-head
+              image: ${IMAGE}
+              env:
+                - {name: DOCKER_HOST, value: "tcp://127.0.0.1:2375"}
+                - {name: WANDB_ENTITY, value: thefleet}
+                - {name: FLEET_FLT, value: /usr/local/bin/flt}
+              envFrom:
+                - secretRef: {name: ${SECRET_NAME}}
+                - secretRef: {name: wandb-api}
+              volumeMounts:
+                - {name: sfs, mountPath: /mnt/sfs}
+                - {name: flt-root, mountPath: /root/.flt}
+                - {name: shm, mountPath: /dev/shm}
+              resources:
+                requests: {cpu: "48", memory: ${MAIN_MEM}, nvidia.com/gpu: ${NUM_GPUS}}
+                limits: {cpu: "64", memory: ${MAIN_MEM_LIM}, nvidia.com/gpu: ${NUM_GPUS}}
+    workerGroupSpecs:
+      - groupName: gpu-worker
+        replicas: ${WORKER_REPLICAS}
+        minReplicas: ${WORKER_REPLICAS}
+        maxReplicas: ${WORKER_REPLICAS}
+        rayStartParams: {}
+        template:
+          metadata:
+            labels: {app: miles-fleet, run: "${JOB_NAME}"}
+            annotations:
+              kueue.x-k8s.io/podset-required-topology: topology.nebius.com/tier-2
+          spec:
+            nodeSelector:
+              kubernetes.io/os: linux
+              workload: ${NODE_WORKLOAD}
+              node.kubernetes.io/instance-type: ${INSTANCE_TYPE}
+            tolerations:
+              - {key: workload, operator: Exists, effect: NoSchedule}
+            imagePullSecrets:
+              - name: ghcr-pull
+            volumes:
+              - name: sfs
+                persistentVolumeClaim: {claimName: sfs-shared}
+              - name: shm
+                emptyDir: {medium: Memory, sizeLimit: 32Gi}
+            containers:
+              - name: ray-worker
+                image: ${IMAGE}
+                envFrom:
+                  - secretRef: {name: ${SECRET_NAME}}
+                  - secretRef: {name: wandb-api}
+                volumeMounts:
+                  - {name: sfs, mountPath: /mnt/sfs}
+                  - {name: shm, mountPath: /dev/shm}
+                resources:
+                  requests: {cpu: "48", memory: ${MAIN_MEM}, nvidia.com/gpu: ${NUM_GPUS}}
+                  limits: {cpu: "64", memory: ${MAIN_MEM_LIM}, nvidia.com/gpu: ${NUM_GPUS}}

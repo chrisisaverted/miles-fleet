@@ -304,6 +304,10 @@ def execute(args: ScriptArgs):
             "--attention-softmax-in-fp32 "
             "--attention-backend flash "
         )
+    if args.num_nodes > 1:
+        # The rollout manager drives env containers over DOCKER_HOST; only
+        # the head pod carries the dind sidecar and flt store.
+        misc_args += "--pin-rollout-manager-to-head "
     misc_args += (
         f"--actor-num-nodes {args.num_nodes} "
         f"--actor-num-gpus-per-node {args.num_gpus_per_node} "

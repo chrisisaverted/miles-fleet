@@ -38,6 +38,10 @@ INSTANCE_TYPE="${INSTANCE_TYPE:-p5en.48xlarge}"
 export NODE_WORKLOAD INSTANCE_TYPE
 export MAIN_MEM_LIM="${MAIN_MEM_LIM:-1300Gi}"
 export SCRIPT_EXTRA="${SCRIPT_EXTRA:-}"
+# NUM_NODES > 1 renders the RayJob template (KubeRay head+workers, gang
+# admission at tier-2) instead of the single-pod Job.
+export NUM_NODES="${NUM_NODES:-1}"
+export WORKER_REPLICAS=$((NUM_NODES - 1))
 
 ts_short=$(basename "${TASKSET_REMOTE_REF%%:*}" | tr '[:upper:]' '[:lower:]' | cut -c1-12)
 rand5=$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n' | cut -c1-5)
@@ -59,10 +63,18 @@ fi
   ${AWS_SECRET_ACCESS_KEY:+--from-literal=AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"} \
   --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
 
-envsubst '$MODEL_NAME $JOB_NAME $SECRET_NAME $IMAGE $TASKSET_REMOTE_REF $TASK_LIMIT $NUM_GPUS $MODE $ROLLOUT_BATCH $N_SAMPLES $MAX_TURNS $CONCURRENCY $MAIN_MEM $MAIN_MEM_LIM $SCRIPT_EXTRA $NODE_WORKLOAD $INSTANCE_TYPE' \
-  < "$HERE/job.yaml.tmpl" | "${KUBECTL[@]}" apply -f -
+TMPL="job.yaml.tmpl"
+[ "$NUM_NODES" -gt 1 ] && TMPL="rayjob.yaml.tmpl"
+envsubst '$MODEL_NAME $JOB_NAME $SECRET_NAME $IMAGE $TASKSET_REMOTE_REF $TASK_LIMIT $NUM_GPUS $NUM_NODES $WORKER_REPLICAS $MODE $ROLLOUT_BATCH $N_SAMPLES $MAX_TURNS $CONCURRENCY $MAIN_MEM $MAIN_MEM_LIM $SCRIPT_EXTRA $NODE_WORKLOAD $INSTANCE_TYPE' \
+  < "$HERE/$TMPL" | "${KUBECTL[@]}" apply -f -
 
 echo
-echo "status: kubectl --context ${KUBE_CONTEXT} get job ${JOB_NAME} -n fleet-train-jobs -w"
-echo "logs:   kubectl --context ${KUBE_CONTEXT} logs -f job/${JOB_NAME} -c miles -n fleet-train-jobs"
-echo "sfs:    /mnt/sfs/miles-fleet/${JOB_NAME}/driver.log"
+if [ "$NUM_NODES" -gt 1 ]; then
+  echo "status: kubectl --context ${KUBE_CONTEXT} get rayjob ${JOB_NAME} -n fleet-train-jobs -w"
+  echo "logs:   kubectl --context ${KUBE_CONTEXT} logs -f -l ray.io/node-type=head,ray.io/cluster in (\$(kubectl --context ${KUBE_CONTEXT} get rayjob ${JOB_NAME} -n fleet-train-jobs -o jsonpath={.status.rayClusterName})) -n fleet-train-jobs 2>/dev/null || true"
+  echo "sfs:    /mnt/sfs/miles-fleet/${JOB_NAME}/driver.log"
+else
+  echo "status: kubectl --context ${KUBE_CONTEXT} get job ${JOB_NAME} -n fleet-train-jobs -w"
+  echo "logs:   kubectl --context ${KUBE_CONTEXT} logs -f job/${JOB_NAME} -c miles -n fleet-train-jobs"
+  echo "sfs:    /mnt/sfs/miles-fleet/${JOB_NAME}/driver.log"
+fi
