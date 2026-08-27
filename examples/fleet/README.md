@@ -30,15 +30,13 @@ Validated examples: [`launch/rl1/examples/`](launch/rl1/examples/).
 {
   "name": "miles-vl-qwen38-01",
   "image": "ghcr.io/fleet-ai/miles-fleet/trainer:6d6baa6b",
-  "command": "python examples/fleet/launch/run_fleet.py --skip-prepare --model-dir /mnt/sfs/miles-fleet/models --output-dir /mnt/sfs/miles-fleet --num-gpus-per-node 8 --rollout-batch-size 8 --n-samples-per-prompt 8 --max-concurrent-envs 8 --model-name qwen3.8-27b --mode normal --num-nodes 1 --run-id miles-vl-qwen38-01 --dataset-dir /mnt/sfs/miles-fleet/miles-vl-qwen38-01/data --data-dir /mnt/sfs/miles-fleet/miles-vl-qwen38-01 --max-turns 32",
+  "command": "bash examples/fleet/launch/rl1/run.sh --model-name qwen3.8-27b --mode normal --num-nodes 1 --num-gpus-per-node 8 --max-turns 32",
   "workers": 1,
   "gpus_per_worker": 8,
+  "pool": "gpu-b200",
   "env": {
-    "MODEL_NAME": "qwen3.8-27b",
     "TASKSET_REF": "registry-alpha.fleetai.me/gentle-cedar-garden/evaluation-benchmark:v3",
-    "MODE": "normal",
-    "TASK_LIMIT": "64",
-    "RUN_ID": "miles-vl-qwen38-01"
+    "TASK_LIMIT": "64"
   },
   "secrets": ["wandb-api"]
 }
@@ -48,15 +46,18 @@ Validated examples: [`launch/rl1/examples/`](launch/rl1/examples/).
 |---|---|---|
 | `name` | run, RayJob, SFS dir, and WandB group name | DNS-safe label |
 | `image` | trainer image from the build step | |
-| `command` | training invocation, runs on the head after the boot phase | no apostrophes; must agree with env (`--mode`, `--model-name`, `--num-nodes`) |
-| `workers` | GPU pods, head included | >= 1; equals the command's `--num-nodes` |
+| `command` | what to run; the code side, everything included (`run.sh` does setup then training) | no apostrophes |
+| `workers` | GPU pods; at 8 GPUs each, one pod fills one node, so workers = machines | >= 1 |
 | `gpus_per_worker` | GPUs per pod | 1..8 |
-| `env.MODEL_NAME` | recipe row in `launch/run_fleet.py`; selects node pool and memory sizing | `glm4.7-flash` (H200) or `qwen3.8-27b` (B200) |
-| `env.TASKSET_REF` | taskset the boot phase pulls | |
-| `env.MODE` | run type | `normal`, `debug_minimal`, `rollout_only` |
-| `env.TASK_LIMIT` | task sample cap for the dataset build | "0" = whole taskset |
-| `env.RUN_ID` | must equal `name` | |
-| `secrets` | extra pre-created secrets mounted as env | `wandb-api` always included |
+| `env` | free-form env vars injected into every GPU pod | strings only; `RUN_ID` defaults to `name` |
+| `secrets` | pre-created secrets mounted as env | `wandb-api` always included |
+| `pool` | placement: which node pool | `gpu-b200` (default) or `gpu-h200` |
+
+The platform side (submitter + RayJob template) owns placement, env and
+secret injection, the SFS log location, queueing, and lifecycle. The code
+side is the image: `run.sh` reads `TASKSET_REF`/`TASK_LIMIT`/`RUN_ID` from
+the injected env, prepares the run (taskset, dataset, env images, model),
+and execs the training launcher with the arguments it was given.
 
 ## 3. One-time setup
 

@@ -1,15 +1,13 @@
 {
   "name": "miles-vl-qwen38-01",
   "image": "ghcr.io/fleet-ai/miles-fleet/trainer:6d6baa6b",
-  "command": "python examples/fleet/launch/run_fleet.py --skip-prepare --model-dir /mnt/sfs/miles-fleet/models --output-dir /mnt/sfs/miles-fleet --num-gpus-per-node 8 --rollout-batch-size 8 --n-samples-per-prompt 8 --max-concurrent-envs 8 --model-name qwen3.8-27b --mode normal --num-nodes 1 --run-id miles-vl-qwen38-01 --dataset-dir /mnt/sfs/miles-fleet/miles-vl-qwen38-01/data --data-dir /mnt/sfs/miles-fleet/miles-vl-qwen38-01 --max-turns 32",
+  "command": "bash examples/fleet/launch/rl1/run.sh --model-name qwen3.8-27b --mode normal --num-nodes 1 --num-gpus-per-node 8 --max-turns 32",
   "workers": 1,
   "gpus_per_worker": 8,
+  "pool": "gpu-b200",
   "env": {
-    "MODEL_NAME": "qwen3.8-27b",
     "TASKSET_REF": "registry-alpha.fleetai.me/gentle-cedar-garden/evaluation-benchmark:v3",
-    "MODE": "normal",
-    "TASK_LIMIT": "64",
-    "RUN_ID": "miles-vl-qwen38-01"
+    "TASK_LIMIT": "64"
   },
   "secrets": ["wandb-api"]
 }

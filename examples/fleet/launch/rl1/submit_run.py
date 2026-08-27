@@ -1,33 +1,28 @@
 #!/usr/bin/env python3
-"""Submit a Fleet training run to rl1 from a RunPayload JSON.
+"""Submit a Fleet training run to rl1 from a run payload JSON.
 
-The payload is the future runs-API contract (same shape as SkyRL-Fleet's
-rl1 integration); this script is the API stand-in: it validates the payload,
-creates the per-run credentials secret, renders rayjob.yaml.tmpl, and applies
-it. `--dry-run` prints the manifest instead of applying.
+Stand-in for POST /v1/runs: a run is a name, an image, a command, how many
+GPUs, and env variables. The platform side (this script plus the RayJob
+template) owns placement, env and secret injection, the SFS log/trace
+location, queueing, and lifecycle; the code side lives in the image and is
+whatever `command` invokes.
 
     ./submit_run.py examples/vision-qwen38-27b.json
     ./submit_run.py my-run.json --dry-run
 
-Payload fields:
-    name             run and RayJob name; also the SFS and WandB group name
+Payload:
+    name             run and RayJob name (DNS-safe label)
     image            ghcr.io/fleet-ai/miles-fleet/trainer:<sha>
-    command          the training invocation, executed on the head after the
-                     boot phase (taskset pull, dataset build, env-image
-                     pre-pull, model prep). No apostrophes: the entrypoint is
-                     single-quoted.
-    workers          number of GPU pods (head included); >= 1
+    command          what to run; no apostrophes (single-quoted entrypoint)
+    workers          number of GPU pods; with gpus_per_worker=8 one pod fills
+                     one node, so workers = machines
     gpus_per_worker  1..8
-    env              the five boot/run knobs:
-                       MODEL_NAME    recipe row in launch/run_fleet.py; also
-                                     selects node pool and memory sizing
-                       TASKSET_REF   registry-alpha taskset reference
-                       MODE          normal | debug_minimal | rollout_only
-                       TASK_LIMIT    task sample cap; "0" = whole taskset
-                       RUN_ID        must equal name
-    secrets          extra pre-created secrets to mount as env (wandb-api is
-                     always included; the per-run Fleet credentials secret is
-                     created by this script because the token expires)
+    env              free-form env vars injected into every GPU pod
+    secrets          pre-created k8s secrets mounted as env (wandb-api is
+                     always included; a per-run Fleet credentials secret is
+                     created here because the token expires)
+    pool             optional placement override: gpu-b200 (default) or
+                     gpu-h200. A platform placement check, not a code knob.
 """
 
 import argparse
@@ -42,18 +37,9 @@ from pathlib import Path
 KUBECTL = ["kubectl", "--context", "fleet-training-rl1-us-east-1", "-n", "fleet-train-jobs"]
 HERE = Path(__file__).resolve().parent
 
-REQUIRED_ENV = ("MODEL_NAME", "TASKSET_REF", "MODE", "TASK_LIMIT", "RUN_ID")
-
-# The node pool and memory sizing are model facts, not run knobs: the 27B
-# needs the B200s (179GB/GPU; its full-context train step is ~134GB/rank) and
-# ~1.15TB host RAM for offload_train; GLM fits the H200 pool.
-_MODEL_PLACEMENT = {
-    "glm4.7-flash": dict(
-        NODE_WORKLOAD="gpu-h200", INSTANCE_TYPE="p5en.48xlarge", MAIN_MEM="925Gi", MAIN_MEM_LIM="1300Gi"
-    ),
-    "qwen3.8-27b": dict(
-        NODE_WORKLOAD="gpu-b200", INSTANCE_TYPE="p6-b200.48xlarge", MAIN_MEM="1500Gi", MAIN_MEM_LIM="1900Gi"
-    ),
+_POOLS = {
+    "gpu-b200": dict(NODE_WORKLOAD="gpu-b200", INSTANCE_TYPE="p6-b200.48xlarge", MAIN_MEM="1500Gi", MAIN_MEM_LIM="1900Gi"),
+    "gpu-h200": dict(NODE_WORKLOAD="gpu-h200", INSTANCE_TYPE="p5en.48xlarge", MAIN_MEM="925Gi", MAIN_MEM_LIM="1300Gi"),
 }
 
 
@@ -64,7 +50,7 @@ def _fail(msg: str) -> None:
 
 def _load_payload(path: str) -> dict:
     payload = json.loads(Path(path).read_text())
-    for field in ("name", "image", "command", "workers", "gpus_per_worker", "env"):
+    for field in ("name", "image", "command", "workers", "gpus_per_worker"):
         if field not in payload:
             _fail(f"payload is missing '{field}'")
     if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,50}[a-z0-9])?", payload["name"]):
@@ -73,41 +59,33 @@ def _load_payload(path: str) -> dict:
         _fail("workers must be an integer >= 1")
     if not (isinstance(payload["gpus_per_worker"], int) and 1 <= payload["gpus_per_worker"] <= 8):
         _fail("gpus_per_worker must be 1..8")
-    missing = [k for k in REQUIRED_ENV if k not in payload["env"]]
-    if missing:
-        _fail(f"env is missing {missing}; the contract is exactly these knobs: {list(REQUIRED_ENV)}")
-    if payload["env"]["MODEL_NAME"] not in _MODEL_PLACEMENT:
-        _fail(f"unknown MODEL_NAME {payload['env']['MODEL_NAME']!r}; known: {sorted(_MODEL_PLACEMENT)}")
-    if payload["env"]["MODE"] not in ("normal", "debug_minimal", "rollout_only"):
-        _fail("MODE must be normal | debug_minimal | rollout_only")
-    if payload["env"]["RUN_ID"] != payload["name"]:
-        _fail("env.RUN_ID must equal name (it names the SFS dir and WandB group)")
     if "'" in payload["command"]:
         _fail("command must not contain apostrophes (the RayJob entrypoint is single-quoted)")
-    for token in (
-        f"--mode {payload['env']['MODE']}",
-        f"--model-name {payload['env']['MODEL_NAME']}",
-        f"--num-nodes {payload['workers']}",
-    ):
-        if token not in payload["command"]:
-            _fail(f"command does not contain '{token}' declared in env")
+    if payload.get("pool", "gpu-b200") not in _POOLS:
+        _fail(f"pool must be one of {sorted(_POOLS)}")
+    env = payload.get("env", {})
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
+        _fail("env must be a flat map of string to string")
     return payload
 
 
+def _env_lines(env: dict, indent: str) -> str:
+    return "".join(f"\n{indent}- {{name: {k}, value: {json.dumps(v)}}}" for k, v in env.items())
+
+
 def _render(payload: dict) -> str:
-    env = payload["env"]
-    placement = _MODEL_PLACEMENT[env["MODEL_NAME"]]
+    env = dict(payload.get("env", {}))
+    env.setdefault("RUN_ID", payload["name"])
     values = {
         "JOB_NAME": payload["name"],
         "SECRET_NAME": f"{payload['name']}-secrets",
         "IMAGE": payload["image"],
-        "TASKSET_REMOTE_REF": env["TASKSET_REF"],
-        "MODEL_NAME": env["MODEL_NAME"],
-        "TASK_LIMIT": str(env["TASK_LIMIT"]),
         "COMMAND": payload["command"],
         "WORKER_REPLICAS": str(payload["workers"] - 1),
         "NUM_GPUS": str(payload["gpus_per_worker"]),
-        **placement,
+        "EXTRA_ENV": _env_lines(env, "                "),
+        "WORKER_EXTRA_ENV": _env_lines(env, "                  ") or "\n                  []",
+        **_POOLS[payload.get("pool", "gpu-b200")],
     }
     template = (HERE / "rayjob.yaml.tmpl").read_text()
     rendered = re.sub(r"\$\{(\w+)\}", lambda m: values.get(m.group(1), m.group(0)), template)
@@ -142,7 +120,7 @@ def _create_run_secret(name: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("payload", help="path to a RunPayload JSON")
+    parser.add_argument("payload", help="path to a run payload JSON")
     parser.add_argument("--dry-run", action="store_true", help="print the rendered RayJob instead of applying")
     args = parser.parse_args()
 
