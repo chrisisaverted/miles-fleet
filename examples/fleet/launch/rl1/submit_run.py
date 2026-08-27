@@ -34,13 +34,29 @@ import subprocess
 import sys
 from pathlib import Path
 
-KUBECTL = ["kubectl", "--context", "fleet-training-rl1-us-east-1", "-n", "fleet-train-jobs"]
 HERE = Path(__file__).resolve().parent
 
+# A pool names a set of identical GPU machines and the cluster that hosts
+# them. rl1 pools live on the AWS emulation cluster; gpu-b300 is the Nebius
+# production cluster (24 x 8 B300, 268GB per GPU, 2.7TB host RAM).
 _POOLS = {
-    "gpu-b200": dict(NODE_WORKLOAD="gpu-b200", INSTANCE_TYPE="p6-b200.48xlarge", MAIN_MEM="1500Gi", MAIN_MEM_LIM="1900Gi"),
-    "gpu-h200": dict(NODE_WORKLOAD="gpu-h200", INSTANCE_TYPE="p5en.48xlarge", MAIN_MEM="925Gi", MAIN_MEM_LIM="1300Gi"),
+    "gpu-b200": dict(
+        KUBE_CONTEXT="fleet-training-rl1-us-east-1", CPU_WORKLOAD="infra",
+        NODE_WORKLOAD="gpu-b200", INSTANCE_TYPE="p6-b200.48xlarge", MAIN_MEM="1500Gi", MAIN_MEM_LIM="1900Gi",
+    ),
+    "gpu-h200": dict(
+        KUBE_CONTEXT="fleet-training-rl1-us-east-1", CPU_WORKLOAD="infra",
+        NODE_WORKLOAD="gpu-h200", INSTANCE_TYPE="p5en.48xlarge", MAIN_MEM="925Gi", MAIN_MEM_LIM="1300Gi",
+    ),
+    "gpu-b300": dict(
+        KUBE_CONTEXT="nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6", CPU_WORKLOAD="fleetai-training-ng-cpu",
+        NODE_WORKLOAD="fleetai-training-ng-gpu", INSTANCE_TYPE="gpu-b300-sxm", MAIN_MEM="1500Gi", MAIN_MEM_LIM="2400Gi",
+    ),
 }
+
+
+def _kubectl(pool: str) -> list:
+    return ["kubectl", "--context", _POOLS[pool]["KUBE_CONTEXT"], "-n", "fleet-train-jobs"]
 
 
 def _fail(msg: str) -> None:
@@ -76,6 +92,7 @@ def _env_lines(env: dict, indent: str) -> str:
 def _render(payload: dict) -> str:
     env = dict(payload.get("env", {}))
     env.setdefault("RUN_ID", payload["name"])
+    pool_vals = {k: v for k, v in _POOLS[payload.get("pool", "gpu-b200")].items() if k != "KUBE_CONTEXT"}
     values = {
         "JOB_NAME": payload["name"],
         "SECRET_NAME": f"{payload['name']}-secrets",
@@ -85,7 +102,7 @@ def _render(payload: dict) -> str:
         "NUM_GPUS": str(payload["gpus_per_worker"]),
         "EXTRA_ENV": _env_lines(env, "                "),
         "WORKER_EXTRA_ENV": _env_lines(env, "                  ") or "\n                  []",
-        **_POOLS[payload.get("pool", "gpu-b200")],
+        **pool_vals,
     }
     template = (HERE / "rayjob.yaml.tmpl").read_text()
     rendered = re.sub(r"\$\{(\w+)\}", lambda m: values.get(m.group(1), m.group(0)), template)
@@ -111,7 +128,7 @@ def _render(payload: dict) -> str:
     return rendered
 
 
-def _create_run_secret(name: str) -> None:
+def _create_run_secret(name: str, kubectl: list) -> None:
     creds = Path.home() / ".config/fleet/credentials.json"
     if not creds.exists():
         _fail("~/.config/fleet/credentials.json not found; run `flt auth login registry-alpha.fleetai.me`")
@@ -120,10 +137,10 @@ def _create_run_secret(name: str) -> None:
         if os.environ.get(key):
             literals.append(f"--from-literal={key}={os.environ[key]}")
     manifest = subprocess.run(
-        KUBECTL + ["create", "secret", "generic", f"{name}-secrets", *literals, "--dry-run=client", "-o", "yaml"],
+        kubectl + ["create", "secret", "generic", f"{name}-secrets", *literals, "--dry-run=client", "-o", "yaml"],
         check=True, capture_output=True, text=True,
     ).stdout
-    subprocess.run(KUBECTL + ["apply", "-f", "-"], input=manifest, check=True, text=True)
+    subprocess.run(kubectl + ["apply", "-f", "-"], input=manifest, check=True, text=True)
 
 
 def main() -> None:
@@ -137,11 +154,13 @@ def main() -> None:
     if args.dry_run:
         print(manifest)
         return
-    _create_run_secret(payload["name"])
-    subprocess.run(KUBECTL + ["apply", "-f", "-"], input=manifest, check=True, text=True)
+    kubectl = _kubectl(payload.get("pool", "gpu-b200"))
+    _create_run_secret(payload["name"], kubectl)
+    subprocess.run(kubectl + ["apply", "-f", "-"], input=manifest, check=True, text=True)
     name = payload["name"]
-    print(f"submitted: kubectl --context fleet-training-rl1-us-east-1 -n fleet-train-jobs get rayjob {name} -w")
-    print(f"logs:      kubectl --context fleet-training-rl1-us-east-1 -n fleet-train-jobs logs -f job/{name}")
+    ctx = _POOLS[payload.get("pool", "gpu-b200")]["KUBE_CONTEXT"]
+    print(f"submitted: kubectl --context {ctx} -n fleet-train-jobs get rayjob {name} -w")
+    print(f"logs:      kubectl --context {ctx} -n fleet-train-jobs logs -f job/{name}")
     print(f"sfs:       /mnt/sfs/miles-fleet/{name}/driver.log")
 
 

@@ -42,7 +42,7 @@ spec:
   submitterPodTemplate:
     spec:
       restartPolicy: Never
-      nodeSelector: {kubernetes.io/os: linux, workload: infra}
+      nodeSelector: {kubernetes.io/os: linux, workload: ${CPU_WORKLOAD}}
       tolerations:
         - {key: workload, operator: Exists, effect: NoSchedule}
       containers:
