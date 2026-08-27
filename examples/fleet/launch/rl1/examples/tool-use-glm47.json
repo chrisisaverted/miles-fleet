@@ -1,0 +1,14 @@
+{
+  "name": "miles-tu-glm47-01",
+  "image": "ghcr.io/fleet-ai/miles-fleet/trainer:6d6baa6b",
+  "workers": 1,
+  "gpus_per_worker": 8,
+  "env": {
+    "MODEL_NAME": "glm4.7-flash",
+    "TASKSET_REF": "registry-alpha.fleetai.me/library/ade-bench:latest",
+    "MODE": "normal",
+    "TASK_LIMIT": "0",
+    "MAX_TURNS": "32"
+  },
+  "secrets": ["wandb-api"]
+}

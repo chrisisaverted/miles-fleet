@@ -1,0 +1,14 @@
+{
+  "name": "miles-vl-qwen38-2node-01",
+  "image": "ghcr.io/fleet-ai/miles-fleet/trainer:6d6baa6b",
+  "workers": 2,
+  "gpus_per_worker": 8,
+  "env": {
+    "MODEL_NAME": "qwen3.8-27b",
+    "TASKSET_REF": "registry-alpha.fleetai.me/gentle-cedar-garden/evaluation-benchmark:v3",
+    "MODE": "debug_minimal",
+    "TASK_LIMIT": "64",
+    "MAX_TURNS": "32"
+  },
+  "secrets": ["wandb-api"]
+}

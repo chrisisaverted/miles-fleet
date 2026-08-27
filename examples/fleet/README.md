@@ -38,27 +38,14 @@ written off and its batch group is resampled; the run keeps going.
 bash examples/fleet/launch/rl1/build_image.sh fleet-integration
 # -> ghcr.io/fleet-ai/miles-fleet/trainer:<8-char-sha>
 
-# 2. GLM-4.7-Flash on ade-bench (text tool use, H200 node)
-JOB_NAME=my-run MODEL_NAME=glm4.7-flash \
-bash examples/fleet/launch/rl1/launch_fleet.sh <sha> \
-  registry-alpha.fleetai.me/library/ade-bench:latest normal
-
-# 3. Qwen3.8-27B on evaluation-benchmark (GUI/vision, B200 node)
-#    AWS creds are needed: this taskset's seeds live on s3
-JOB_NAME=my-run MODEL_NAME=qwen3.8-27b \
-NODE_WORKLOAD=gpu-b200 INSTANCE_TYPE=p6-b200.48xlarge \
-MAIN_MEM=1500Gi MAIN_MEM_LIM=1900Gi \
-bash examples/fleet/launch/rl1/launch_fleet.sh <sha> \
-  registry-alpha.fleetai.me/gentle-cedar-garden/evaluation-benchmark:v3 normal
+# 2. submit a run from a RunPayload JSON (the future runs-API contract)
+./examples/fleet/launch/rl1/submit_run.py examples/fleet/launch/rl1/examples/vision-qwen38-27b.json
 ```
 
-Modes: `normal` (train), `debug_minimal` (2-turn episodes, 2 steps, ~40 min
-end to end), `rollout_only` (full-length episodes, no training; check parse
-rate and rewards from the dumps). Other env vars: `NUM_GPUS` (default 8),
-`TASK_LIMIT` (0 = whole taskset), `ROLLOUT_BATCH`, `N_SAMPLES`, `MAX_TURNS`.
-Jobs go through the Kueue queue `training-lq`; unqueued GPU jobs on this
-cluster get preempted. Check `flt auth status` before launching: expired
-Fleet credentials fail the boot at `docker login`.
+The payload carries five run knobs (`MODEL_NAME`, `TASKSET_REF`, `MODE`,
+`TASK_LIMIT`, `MAX_TURNS`) plus `workers`/`gpus_per_worker`; node placement
+and memory sizing follow the model. Every run is a RayJob gang-admitted by
+Kueue. Full operational detail: [RUNBOOK.md](RUNBOOK.md).
 
 Watch a run:
 
