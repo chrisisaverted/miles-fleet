@@ -1,8 +1,10 @@
-# miles on rl1
+# miles on the Fleet training clusters
 
-How to train a model on Fleet tasks using the rl1 cluster. You write one
-JSON file describing the run and submit it with one command; everything else
-happens on the cluster.
+How to train a model on Fleet tasks. You write one JSON file describing the
+run and submit it with one command; everything else happens on the cluster.
+The default cluster is the Nebius B300 cluster (`fleetai-training`, 24
+machines with 8 B300 GPUs each); the older rl1 cluster remains available as
+the `gpu-b200` and `gpu-h200` pools.
 
 ## 1. How it works
 
@@ -30,9 +32,12 @@ need, and download the model onto the shared filesystem (a one-time cost;
 later runs reuse it). Then your command runs. Everything under `/mnt/sfs`
 survives after the run; everything else on the pods is wiped.
 
+`submit_run.py` prints the exact kubectl commands for the chosen cluster
+after submitting. For the default B300 pool:
+
 ```bash
-kubectl --context fleet-training-rl1-us-east-1 -n fleet-train-jobs get rayjob <name> -w
-kubectl --context fleet-training-rl1-us-east-1 -n fleet-train-jobs delete rayjob <name>
+kubectl --context nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6 -n fleet-train-jobs get rayjob <name> -w
+kubectl --context nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6 -n fleet-train-jobs delete rayjob <name>
 ```
 
 ## 2. The run JSON
@@ -42,7 +47,7 @@ Working examples: [`launch/rl1/examples/`](launch/rl1/examples/).
 ```json
 {
   "name": "miles-vl-qwen38-01",
-  "image": "ghcr.io/fleet-ai/miles-fleet/trainer:a871b291",
+  "image": "ghcr.io/fleet-ai/miles-fleet/trainer:add32b6d",
   "command": "bash examples/fleet/launch/rl1/run.sh --model-name qwen3.8-27b --mode normal --num-nodes 1 --num-gpus-per-node 8 --max-turns 32",
   "workers": 1,
   "gpus_per_worker": 8,
@@ -62,13 +67,16 @@ Working examples: [`launch/rl1/examples/`](launch/rl1/examples/).
 | `command` | what to run on the head. `run.sh` does the setup and then starts training with the arguments you give it. One rule: no apostrophes. |
 | `workers` | how many 8-GPU machines the run uses. 1 for a single machine, 2 to span two. |
 | `gpus_per_worker` | GPUs per machine, normally 8 |
-| `pool` | which machines: `gpu-b200` (default, 179GB per GPU) or `gpu-h200` (141GB per GPU). The 27B model at full context only fits the B200s. |
+| `pool` | which machines. `gpu-b300` (default): the Nebius cluster, 24 machines, 268GB per GPU, fast cross-machine fabric. `gpu-b200` (179GB) and `gpu-h200` (141GB): rl1, legacy. Each pool knows its own cluster; the submitter routes accordingly. |
 | `env` | environment variables handed to every pod. `run.sh` reads `TASKSET_REF` (which taskset) and `TASK_LIMIT` (how many tasks to sample; "0" means all). `RUN_ID` is filled in from `name` automatically. |
 | `secrets` | names of cluster secrets whose contents become environment variables. `wandb-api` is always added. Your Fleet login is packaged into a fresh secret at submit time. |
 
 ## 3. One-time setup
 
-- kubeconfig for `fleet-training-rl1-us-east-1`.
+- kubeconfig for the cluster you use. B300:
+  `nebius mk8s cluster get-credentials --id mk8scluster-e04zw4ye1k7wczqdw6 --external`
+  (needs the Nebius CLI logged in). rl1: the
+  `fleet-training-rl1-us-east-1` context.
 - A valid Fleet login: check with `flt auth status`, renew with
   `flt auth login registry-alpha.fleetai.me`. The login expires after a few
   days; submitting with an expired one makes the run die early with a 401.
@@ -99,11 +107,15 @@ changes.
 On any new image, model, or machine type, run with `--mode debug_minimal`
 in the command first: it does two tiny training rounds end to end in about
 40 minutes and catches almost every problem a long run would hit.
+`workers: 2` (or more) spans machines; on the B300 cluster the machines talk
+over the InfiniBand fabric (the cluster measured 473 GB/s between racks), so
+multi-machine training runs at full speed there. On rl1 the machines only
+have ordinary networking; keep multi-machine runs on B300.
 
 ## 6. Watch a run
 
 ```bash
-kubectl --context fleet-training-rl1-us-east-1 -n fleet-train-jobs logs -f job/<name>
+kubectl --context <cluster-context> -n fleet-train-jobs logs -f job/<name>   # context printed at submit
 # the same log persists at /mnt/sfs/miles-fleet/<name>/driver.log
 #   (it is appended across resubmits of the same name — check timestamps)
 # metrics: https://wandb.ai/thefleet/miles-run_fleet, group = <name>
