@@ -4,10 +4,12 @@
   "command": "bash examples/fleet/launch/rl1/run.sh --model-name qwen3.8-27b --mode normal --num-nodes 1 --num-gpus-per-node 8 --max-turns 32",
   "workers": 1,
   "gpus_per_worker": 8,
-  "pool": "gpu-b200",
+  "pool": "gpu-b300",
   "env": {
     "TASKSET_REF": "registry-alpha.fleetai.me/gentle-cedar-garden/evaluation-benchmark:v3",
     "TASK_LIMIT": "64"
   },
-  "secrets": ["wandb-api"]
+  "secrets": [
+    "wandb-api"
+  ]
 }

@@ -113,12 +113,15 @@ spec:
           containers:
             - name: ray-head
               image: ${IMAGE}
-              # sglang engines share CUDA memory between their subprocesses
-              # via pidfd_getfd, which the default seccomp profile denies
-              # without this capability (hit on Nebius mk8s; EKS runs
-              # unconfined so it never showed there)
+              # privileged for two measured reasons: (1) sglang engine
+              # subprocesses share CUDA memory via pidfd_getfd, denied by the
+              # default seccomp profile; (2) on the Nebius cluster the
+              # InfiniBand devices are exposed to privileged containers, and
+              # that is what carries cross-node NCCL at fabric speed (the
+              # cluster's own nccl-test measured 473 GB/s cross-rack with
+              # exactly this: privileged + 8 GPUs, nothing else)
               securityContext:
-                capabilities: {add: [SYS_PTRACE]}
+                privileged: true
               env:
                 - {name: DOCKER_HOST, value: "tcp://127.0.0.1:2375"}
                 - {name: WANDB_ENTITY, value: thefleet}
@@ -162,7 +165,7 @@ spec:
               - name: ray-worker
                 image: ${IMAGE}
                 securityContext:
-                  capabilities: {add: [SYS_PTRACE]}
+                  privileged: true
                 env:${WORKER_EXTRA_ENV}
                 envFrom:
                   - secretRef: {name: ${SECRET_NAME}}

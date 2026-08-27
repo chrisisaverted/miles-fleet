@@ -21,8 +21,8 @@ Payload:
     secrets          pre-created k8s secrets mounted as env (wandb-api is
                      always included; a per-run Fleet credentials secret is
                      created here because the token expires)
-    pool             optional placement override: gpu-b200 (default) or
-                     gpu-h200. A platform placement check, not a code knob.
+    pool             optional placement override: gpu-b300 (default; the
+                     Nebius cluster), gpu-b200, or gpu-h200 (rl1, legacy).
 """
 
 import argparse
@@ -77,7 +77,7 @@ def _load_payload(path: str) -> dict:
         _fail("gpus_per_worker must be 1..8")
     if "'" in payload["command"]:
         _fail("command must not contain apostrophes (the RayJob entrypoint is single-quoted)")
-    if payload.get("pool", "gpu-b200") not in _POOLS:
+    if payload.get("pool", "gpu-b300") not in _POOLS:
         _fail(f"pool must be one of {sorted(_POOLS)}")
     env = payload.get("env", {})
     if not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
@@ -92,7 +92,7 @@ def _env_lines(env: dict, indent: str) -> str:
 def _render(payload: dict) -> str:
     env = dict(payload.get("env", {}))
     env.setdefault("RUN_ID", payload["name"])
-    pool_vals = {k: v for k, v in _POOLS[payload.get("pool", "gpu-b200")].items() if k != "KUBE_CONTEXT"}
+    pool_vals = {k: v for k, v in _POOLS[payload.get("pool", "gpu-b300")].items() if k != "KUBE_CONTEXT"}
     values = {
         "JOB_NAME": payload["name"],
         "SECRET_NAME": f"{payload['name']}-secrets",
@@ -154,11 +154,11 @@ def main() -> None:
     if args.dry_run:
         print(manifest)
         return
-    kubectl = _kubectl(payload.get("pool", "gpu-b200"))
+    kubectl = _kubectl(payload.get("pool", "gpu-b300"))
     _create_run_secret(payload["name"], kubectl)
     subprocess.run(kubectl + ["apply", "-f", "-"], input=manifest, check=True, text=True)
     name = payload["name"]
-    ctx = _POOLS[payload.get("pool", "gpu-b200")]["KUBE_CONTEXT"]
+    ctx = _POOLS[payload.get("pool", "gpu-b300")]["KUBE_CONTEXT"]
     print(f"submitted: kubectl --context {ctx} -n fleet-train-jobs get rayjob {name} -w")
     print(f"logs:      kubectl --context {ctx} -n fleet-train-jobs logs -f job/{name}")
     print(f"sfs:       /mnt/sfs/miles-fleet/{name}/driver.log")
