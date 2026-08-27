@@ -28,8 +28,8 @@ bash examples/fleet/launch/rl1/build_image.sh fleet-integration
 Builds run in-cluster and clone the ref from GitHub, so uncommitted local
 changes never reach an image. Push before building. A build takes about
 20 minutes; watch with the logs command the script prints. Rebuild only when
-python under `examples/fleet/` changes; `job.yaml.tmpl` and `launch_fleet.sh`
-render at launch time from your local checkout.
+python under `examples/fleet/` changes; `rayjob.yaml.tmpl` and
+`launch_fleet.sh` render at launch time from your local checkout.
 
 ## 3. Launch
 
@@ -63,7 +63,7 @@ Other env vars: `NUM_GPUS` (8), `TASK_LIMIT` (0 = whole taskset),
 | Pool | Nodes | Per-GPU memory | Fits |
 |---|---|---|---|
 | `gpu-h200` | 2x p5en.48xlarge (8x H200) | 141GB | GLM recipe; NOT the 27B at full context |
-| `gpu-b200` | 1x p6-b200.48xlarge (8x B200) | 179GB | everything above plus the 27B at full context |
+| `gpu-b200` | 2x p6-b200.48xlarge (8x B200 each) | 179GB | everything above plus the 27B at full context; 2-node gangs |
 
 Jobs are admitted by Kueue (queue `training-lq`); a job stays `suspend: true`
 until quota frees. `kubectl describe workload <name>` shows why a job is
