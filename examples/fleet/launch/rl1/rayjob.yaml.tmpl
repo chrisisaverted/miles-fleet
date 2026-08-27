@@ -113,6 +113,12 @@ spec:
           containers:
             - name: ray-head
               image: ${IMAGE}
+              # sglang engines share CUDA memory between their subprocesses
+              # via pidfd_getfd, which the default seccomp profile denies
+              # without this capability (hit on Nebius mk8s; EKS runs
+              # unconfined so it never showed there)
+              securityContext:
+                capabilities: {add: [SYS_PTRACE]}
               env:
                 - {name: DOCKER_HOST, value: "tcp://127.0.0.1:2375"}
                 - {name: WANDB_ENTITY, value: thefleet}
@@ -155,6 +161,8 @@ spec:
             containers:
               - name: ray-worker
                 image: ${IMAGE}
+                securityContext:
+                  capabilities: {add: [SYS_PTRACE]}
                 env:${WORKER_EXTRA_ENV}
                 envFrom:
                   - secretRef: {name: ${SECRET_NAME}}
