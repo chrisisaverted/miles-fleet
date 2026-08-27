@@ -47,7 +47,9 @@ bash examples/fleet/launch/rl1/launch_fleet.sh <image-sha> \
   registry-alpha.fleetai.me/gentle-cedar-garden/evaluation-benchmark:v3 normal
 ```
 
-Modes: `normal` trains (200 rollouts); `debug_minimal` proves the stack in
+Every run is a RayJob (head GPU pod with the env-container docker, plus
+`NUM_NODES-1` GPU workers; `NUM_NODES=1` means zero workers). Gang admission
+happens at tier-2 topology. Modes: `normal` trains (200 rollouts); `debug_minimal` proves the stack in
 about 40 minutes (2-turn episodes, 2 steps); `rollout_only` runs full-length
 episodes without training, for checking parse rates and rewards. Use
 `debug_minimal` first on any new image, model, or node type.
@@ -84,7 +86,7 @@ kubectl edits get reverted. Precedents: theseus PR #25271 (h200), #26799 (b200).
 ## 5. Monitor
 
 ```bash
-kubectl --context fleet-training-rl1-us-east-1 -n fleet-train-jobs logs -f job/<name> -c miles
+kubectl --context fleet-training-rl1-us-east-1 -n fleet-train-jobs logs -f job/<name>   # submitter relays the driver
 # persistent copy: /mnt/sfs/miles-fleet/<name>/driver.log  (append-only across
 # relaunches of the same JOB_NAME: check timestamps before blaming a line)
 # metrics: https://wandb.ai/thefleet/miles-run_fleet, group = JOB_NAME

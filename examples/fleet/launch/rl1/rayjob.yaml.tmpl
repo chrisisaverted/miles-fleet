@@ -1,5 +1,6 @@
-# Multi-node Fleet training RayJob for rl1 (rendered by launch_fleet.sh when
-# NUM_NODES > 1; do not kubectl-apply directly).
+# Fleet training RayJob for rl1, every node count (rendered by
+# launch_fleet.sh; do not kubectl-apply directly). NUM_NODES=1 is a head with
+# zero workers.
 #
 # Shape mirrors the cluster's proven RayJob pattern (skyrl-fleet-v2 rl1):
 # Kueue label + suspend:true, a submitter on infra, and the entrypoint running

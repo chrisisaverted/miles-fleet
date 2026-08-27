@@ -63,7 +63,7 @@ Fleet credentials fail the boot at `docker login`.
 Watch a run:
 
 ```bash
-kubectl -n fleet-train-jobs logs -f job/<name> -c miles     # live
+kubectl -n fleet-train-jobs logs -f job/<name>              # submitter relays the driver
 # persistent copy: /mnt/sfs/miles-fleet/<name>/driver.log
 # metrics: https://wandb.ai/thefleet/miles-run_fleet (group = JOB_NAME)
 # checkpoints: /mnt/sfs/miles-fleet/<name>/checkpoints; relaunching with the
