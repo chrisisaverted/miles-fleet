@@ -106,9 +106,12 @@ _RECIPES: dict[str, _Recipe] = {
     # disk between phases, engines at TP8/EP8 (one engine per 8-GPU node),
     # DSA on tilelang, radix cache off, KV bf16. Budgets are the upstream-
     # validated ones (4096-token responses); anything longer is unmeasured.
-    # TODO(glm53): tito_model/chat_template pending the template study; the
-    # GLM-5 line's tool-call grammar is glm47-style per miles's own parser
-    # registration (tito_tokenizer.py: tool_call_parser = "glm47").
+    # Template study 2026-08-28 (tokenizer-level, byte-exact merge checks):
+    # the glm47 TITO family drives GLM-5.3 unchanged; the stock template has
+    # no exception branches, is append-only over the vision dummy prefix,
+    # and emits the 4.7-style inline arg_key/arg_value tool grammar the
+    # parser handles. The template always prepends a "Reasoning Effort: Max"
+    # system header (tunable via chat_template_kwargs reasoning_effort).
     "glm5.3-flash": _Recipe(
         hf_org="zai-org",
         hf_name="GLM-5.3-Flash",
