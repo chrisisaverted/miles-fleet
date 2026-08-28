@@ -145,9 +145,12 @@ covers the KDA, DSA and hyper-connection paths at once.
 
 The VLM validation in [#2792](https://github.com/radixark/miles/pull/2792) is a two-step
 Geo3K smoke with the four-layer language slice and complete visual tower on one 8 × B300
-node ([Modal app](https://modal.com/apps/modal-labs/nan-dev/ap-GKxA8srlohl3pAUkA4Tidv),
-[W&B run](https://wandb.ai/nan-playground/miles-glm53-vlm/runs/mnr6ue65)). Both steps
-completed normally; PPO KL was 0.00212–0.00216 and rollout/train log-prob absolute
-difference was 0.086–0.099. This validates image preprocessing, frozen-tower parity,
-rollout, training, and post-step language-weight synchronization; it is not evidence for
-full 45-layer VLM convergence.
+node ([Modal app](https://modal.com/apps/modal-labs/nan-dev/ap-46XxFcJ5MeQ8662eDbliq7),
+[W&B run](https://wandb.ai/nan-playground/miles-glm53-vlm/runs/049apd1e)). Step 0 had
+rollout/train mean log-probs of -9.5348/-9.5424, PPO KL 0.001155, and mean absolute
+log-prob difference 0.08584; step 1 had -9.4927/-9.5067, PPO KL 0.001375, and mean
+absolute difference 0.10136. The initial language-weight synchronization passed the exact
+tensor checker, and both post-step synchronizations completed successfully. The tiny
+language slice produced zero rewards, advantages, and gradient norm, as expected. This
+validates image preprocessing, frozen-tower parity, rollout, training, and post-step
+language-weight synchronization; it is not evidence for full 45-layer VLM convergence.
