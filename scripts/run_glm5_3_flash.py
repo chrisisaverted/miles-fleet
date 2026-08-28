@@ -14,7 +14,7 @@ Examples:
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import typer
@@ -36,7 +36,7 @@ class ScriptArgs(U.ExecuteTrainConfig):
     task: Literal["dapo-math", "geo3k"] = "dapo-math"
     num_nodes: int = 2
     num_gpus_per_node: int = 4
-    run_id: str = "glm53flash-dapo"
+    run_id: str = field(default_factory=U.create_run_id)
     hf_checkpoint: str | None = None
     model_dir: str = "/root/models"
     ckpt_dir: str = "/root/ckpt"
@@ -97,7 +97,7 @@ def _train(args: ScriptArgs):
         (6, 4),
         (2, 4),
         (1, 8),
-    ), "the parallel configs below are shaped for 16x4 / 8x4 / 6x4 (full) or 2x4 / 1x8 (8layer)"
+    ), "the parallel configs below are shaped for 16x4 / 8x4 / 6x4 (full) or 2x4 / 1x8 (slices)"
 
     megatron_model_type = _MODEL_REGISTRY[args.model_name]
 

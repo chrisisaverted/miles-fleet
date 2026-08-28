@@ -1,9 +1,24 @@
+# Copyright 2026 the HuggingFace Team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Frozen GLM-5.3 visual tower and Megatron model provider.
 
 The text model remains the GPTModel already validated by the GLM-5.3 PR.  On
 the embedding pipeline stage, this module loads the checkpoint's visual tower,
 computes image embeddings without gradients, and replaces image-token
-embeddings before entering the decoder.
+embeddings before entering the decoder. The visual model is adapted from
+Transformers commit eb4d9e2a64a013bec12289288b85d0b1210ba0aa.
 """
 
 from __future__ import annotations
@@ -176,12 +191,7 @@ def build_glm5_next_visual(hf_checkpoint: str, *, device: torch.device, dtype: t
     with torch.device(device), _default_dtype(dtype):
         visual = Glm5NextVisionModel(vision_config)
 
-    incompatible = visual.load_state_dict(_load_visual_state_dict(hf_checkpoint), strict=True)
-    if incompatible.missing_keys or incompatible.unexpected_keys:
-        raise RuntimeError(
-            f"GLM-5.3 visual checkpoint mismatch: missing={incompatible.missing_keys}, "
-            f"unexpected={incompatible.unexpected_keys}"
-        )
+    visual.load_state_dict(_load_visual_state_dict(hf_checkpoint), strict=True)
     visual.requires_grad_(False)
     visual.eval()
     return visual
@@ -259,34 +269,23 @@ def wire_glm5_next_visual(model: GPTModel, hf_checkpoint: str) -> None:
     model.forward = _multimodal_forward
 
 
-def glm5_next_vlm_model_provider(pre_process: bool = True, post_process: bool = True, vp_stage=None) -> GPTModel:
+def glm5_next_vlm_model_provider(
+    pre_process: bool = True,
+    post_process: bool = True,
+    vp_stage=None,
+) -> GPTModel:
     """Build the validated GLM-5.3 GPT model and attach its frozen visual tower."""
-    from megatron.core.models.gpt import GPTModel
     from megatron.training import get_args
-    from megatron.training.arguments import core_transformer_config_from_args
 
-    from miles_plugins.models.glm5_next.glm5_next import get_glm5_next_spec
+    from miles.backends.megatron_utils.model_provider import build_default_gpt_model
 
     args = get_args()
-    config = core_transformer_config_from_args(args)
-    model_kwargs = {}
-    if vp_stage is not None:
-        model_kwargs["vp_stage"] = vp_stage
-    model = GPTModel(
-        config=config,
-        transformer_layer_spec=get_glm5_next_spec(args, config, vp_stage),
-        vocab_size=args.padded_vocab_size,
-        max_sequence_length=args.max_position_embeddings,
+    model = build_default_gpt_model(
+        args,
+        "actor",
         pre_process=pre_process,
         post_process=post_process,
-        fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
-        parallel_output=True,
-        share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights,
-        position_embedding_type=args.position_embedding_type,
-        rotary_percent=args.rotary_percent,
-        rotary_base=args.rotary_base,
-        rope_scaling=args.use_rope_scaling,
-        **model_kwargs,
+        vp_stage=vp_stage,
     )
     wire_glm5_next_visual(model, args.hf_checkpoint)
     return model

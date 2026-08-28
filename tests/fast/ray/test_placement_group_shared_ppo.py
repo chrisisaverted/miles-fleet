@@ -1,10 +1,9 @@
 from argparse import Namespace
 
 import pytest
-from sglang.srt.constants import GPU_MEMORY_TYPE_CUDA_GRAPH, GPU_MEMORY_TYPE_KV_CACHE, GPU_MEMORY_TYPE_WEIGHTS
 
 from miles.ray import placement_group as placement_group_module
-from miles.ray.placement_group import _get_placement_group_layout, get_rollout_offload_tags, get_rollout_onload_tags
+from miles.ray.placement_group import _get_placement_group_layout
 
 
 def _layout_args(**overrides):
@@ -39,39 +38,6 @@ def test_debug_train_only_counts_actor_bundles_once():
 
 def test_external_rollout_only_reserves_no_local_bundles():
     assert _get_placement_group_layout(_layout_args(debug_rollout_only=True, rollout_external=True)) == (0, 0)
-
-
-@pytest.mark.parametrize(
-    ("levels", "expected"),
-    [
-        (["kv_cache"], [GPU_MEMORY_TYPE_CUDA_GRAPH, GPU_MEMORY_TYPE_KV_CACHE]),
-        (["weight"], [GPU_MEMORY_TYPE_CUDA_GRAPH, GPU_MEMORY_TYPE_WEIGHTS]),
-        (
-            ["kv_cache", "weight"],
-            [GPU_MEMORY_TYPE_CUDA_GRAPH, GPU_MEMORY_TYPE_KV_CACHE, GPU_MEMORY_TYPE_WEIGHTS],
-        ),
-    ],
-)
-def test_rollout_offload_tags_match_requested_levels(levels, expected):
-    assert get_rollout_offload_tags(Namespace(offload_rollout_level=levels)) == expected
-
-
-@pytest.mark.parametrize(
-    ("levels", "expected"),
-    [
-        (["kv_cache"], ([], [GPU_MEMORY_TYPE_CUDA_GRAPH, GPU_MEMORY_TYPE_KV_CACHE])),
-        (["weight"], ([GPU_MEMORY_TYPE_WEIGHTS], [GPU_MEMORY_TYPE_CUDA_GRAPH])),
-        (
-            ["kv_cache", "weight"],
-            (
-                [GPU_MEMORY_TYPE_WEIGHTS],
-                [GPU_MEMORY_TYPE_CUDA_GRAPH, GPU_MEMORY_TYPE_KV_CACHE],
-            ),
-        ),
-    ],
-)
-def test_rollout_onload_tags_only_resume_released_allocations(levels, expected):
-    assert get_rollout_onload_tags(Namespace(offload_rollout_level=levels)) == expected
 
 
 async def test_critic_role_disables_reward_kl_and_preserves_actor_args(monkeypatch):

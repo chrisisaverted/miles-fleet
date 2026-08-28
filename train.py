@@ -2,13 +2,7 @@ import asyncio
 import logging
 import os
 
-from miles.ray.placement_group import (
-    create_placement_groups,
-    create_rollout_manager,
-    create_training_models,
-    get_rollout_offload_tags,
-    get_rollout_onload_tags,
-)
+from miles.ray.placement_group import create_placement_groups, create_rollout_manager, create_training_models
 from miles.utils import object_store
 from miles.utils.arguments import parse_args
 from miles.utils.audit_utils.process_identity import MainProcessIdentity
@@ -49,10 +43,8 @@ async def train(args):
 
     maybe_start_mini_ft_controller(args)
 
-    rollout_weight_tags, rollout_inference_tags = get_rollout_onload_tags(args)
-
-    if args.offload_rollout and rollout_weight_tags:
-        await rollout_manager.onload.remote(tags=rollout_weight_tags)
+    if args.offload_rollout:
+        await rollout_manager.onload_weights.remote()
 
     # always update weight first so that sglang has the loaded weights from training.
     await actor_model.update_weights()
@@ -65,8 +57,8 @@ async def train(args):
             skip_list=args.check_weight_update_skip_list,
         )
 
-    if args.offload_rollout and rollout_inference_tags:
-        await rollout_manager.onload.remote(tags=rollout_inference_tags)
+    if args.offload_rollout:
+        await rollout_manager.onload_kv.remote()
 
     # special case for eval-only
     if args.num_rollout == 0 and args.eval_interval is not None:
@@ -105,7 +97,7 @@ async def train(args):
         rollout_data_pack = await rollout_manager.generate.remote(rollout_id)
 
         if args.offload_rollout:
-            await rollout_manager.offload.remote(tags=get_rollout_offload_tags(args))
+            await rollout_manager.offload.remote()
 
         if args.use_critic:
             values = await critic_model.train(rollout_id, rollout_data_pack)
@@ -128,11 +120,11 @@ async def train(args):
                 os.remove(args.save_trigger_sentinel)
 
         await offload_train()
-        if args.offload_rollout and rollout_weight_tags:
-            await rollout_manager.onload.remote(tags=rollout_weight_tags)
+        if args.offload_rollout:
+            await rollout_manager.onload_weights.remote()
         await actor_model.update_weights(rollout_id=rollout_id)
-        if args.offload_rollout and rollout_inference_tags:
-            await rollout_manager.onload.remote(tags=rollout_inference_tags)
+        if args.offload_rollout:
+            await rollout_manager.onload_kv.remote()
 
         if should_run_periodic_action(rollout_id, args.eval_interval, num_rollout_per_epoch):
             await rollout_manager.eval.remote(rollout_id)

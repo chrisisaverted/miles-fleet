@@ -3,8 +3,9 @@ title: GLM-5.3-Flash
 description: Text and vision-language RL recipes for GLM-5.3-Flash, a KDA + DSA hybrid MoE with mHC hyper-connections and NoPE MLA.
 ---
 
-Implementation: [`radixark/miles#2786`](https://github.com/radixark/miles/pull/2786). It goes
-with the SGLang
+Implementation: text support is in
+[`radixark/miles#2786`](https://github.com/radixark/miles/pull/2786), with vision-language
+support stacked in [`radixark/miles#2792`](https://github.com/radixark/miles/pull/2792). It goes with the SGLang
 [`sglang-miles-glm53next`](https://github.com/sgl-project/sglang/tree/sglang-miles-glm53next)
 branch and [`radixark/Megatron-LM#89`](https://github.com/radixark/Megatron-LM/pull/89); the
 image in section 3 pins all three.
@@ -103,23 +104,25 @@ retain the full `model.visual.*` tensor set as well as `vision_config`.
 Because that frozen tower is deliberately excluded from the optimizer and the
 normal language-weight stream, the B300 VLM recipe offloads only SGLang's KV
 cache and keeps its weights resident. The initial offload honors the same
-`--offload-rollout-level` selection. If a smaller-memory deployment explicitly
+`--offload-rollout-level` selection. For a colocated deployment that explicitly
 offloads rollout weights, Miles appends the frozen `model.visual.*` tensors from
-the Hugging Face checkpoint to each base sync so the tower is restored.
+the Hugging Face checkpoint to each base sync so the tower is restored. The B300
+recipe below uses KV-only offload; validate the more expensive full-weight mode
+on the target topology before production use.
 
 For B300 (SM103), set `NCCL_NVLS_ENABLE=0`, keep Megatron's attention backend on
 `auto`, and use SGLang's `sdpa` multimodal attention backend. Do not select the
 Hopper-only FA3 path. The CUDA image also backports the KDA portion of upstream
 FLA commit `3c4c54ae`, which hoists `triton.next_power_of_2` out of the KDA JIT
-kernel for Triton 3.7; remove that compatibility patch after a post-0.4.2 FLA
-release is pinned.
+kernel for Triton 3.7; remove that compatibility patch once the pinned FLA
+release contains the upstream fix.
 
 | Shape | TP | PP | EP | Rollout engine |
 |---|---|---|---|---|
-| 16 × 4 (full, validated) | 8 | 4 | 16 | 8 GPUs, SGLang TP 8 / EP 8 |
+| 16 × 4 (full, text validated) | 8 | 4 | 16 | 8 GPUs, SGLang TP 8 / EP 8 |
 | 8 × 4 (full) | 8 | 4 | 16 | 8 GPUs, SGLang TP 8 / EP 8 |
 | 6 × 4 (full) | 8 | 3 | 8 | 8 GPUs, SGLang TP 8 / EP 8 |
-| 2 × 4 or 1 × 8 (slices) | 2 | 2 | 2 | 4 GPUs, SGLang TP 4 / EP 4 |
+| 2 × 4 or 1 × 8 (slices; 1 × 8 VLM smoke validated) | 2 | 2 | 2 | 4 GPUs, SGLang TP 4 / EP 4 |
 
 The PP-4 shapes run 11 / 11 / 11 / 12 layers per stage, since 45 does not divide by 4.
 GRPO on DAPO-Math-17k, Adam at `lr 1e-6`, `max_tokens_per_gpu 8192`, full uniform recompute.
@@ -141,3 +144,12 @@ From the validation run in [#2786](https://github.com/radixark/miles/pull/2786) 
 
 `train/train_rollout_logprob_abs_diff` is the one to read first on a fresh bring-up: it
 covers the KDA, DSA and hyper-connection paths at once.
+
+The VLM validation in [#2792](https://github.com/radixark/miles/pull/2792) is a two-step
+Geo3K smoke with the four-layer language slice and complete visual tower on one 8 × B300
+node ([Modal app](https://modal.com/apps/modal-labs/nan-dev/ap-GKxA8srlohl3pAUkA4Tidv),
+[W&B run](https://wandb.ai/nan-playground/miles-glm53-vlm/runs/mnr6ue65)). Both steps
+completed normally; PPO KL was 0.00212–0.00216 and rollout/train log-prob absolute
+difference was 0.086–0.099. This validates image preprocessing, frozen-tower parity,
+rollout, training, and post-step language-weight synchronization; it is not evidence for
+full 45-layer VLM convergence.
