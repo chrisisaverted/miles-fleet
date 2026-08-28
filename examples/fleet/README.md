@@ -14,6 +14,17 @@ you ──run JSON──▶ submit_run.py ──▶ cluster queue ──▶ GPU 
                           (log, checkpoints, dumps)
 ```
 
+`submit_run.py` is a stand-in, not the real thing. The platform will get a
+jobs API (POST a run, get back an id, poll its status). Until that exists,
+this script plays the API's part from your laptop: it checks the JSON,
+packages your Fleet login into a cluster secret, writes the Kubernetes
+object, and prints the watch commands. When the jobs API ships, the JSON
+you write stays exactly the same and everything inside the image runs
+unchanged; what changes is who does the submitting. The script goes away,
+kubectl stops being something you need, and status and logs come from API
+calls instead of cluster access. Nothing in this directory except
+`submit_run.py` (and the RayJob template it fills in) will need to change.
+
 Submitting creates a RayJob (a Kubernetes object that KubeRay, the cluster's
 Ray operator, turns into pods). Three kinds of pods come up:
 
