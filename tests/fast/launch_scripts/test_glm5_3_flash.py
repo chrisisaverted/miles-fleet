@@ -1,10 +1,6 @@
 from scripts.run_glm5_3_flash import ScriptArgs, _train
 
-from tests.ci.ci_register import register_cpu_ci
-
 import miles.utils.external_utils.command_utils as U
-
-register_cpu_ci(est_time=10, suite="stage-a-cpu", labels=[])
 
 
 def _capture_train_args(monkeypatch, *, task: str) -> str:
