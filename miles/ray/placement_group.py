@@ -5,12 +5,31 @@ import socket
 import ray
 from ray.util.placement_group import placement_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
+from sglang.srt.constants import GPU_MEMORY_TYPE_CUDA_GRAPH, GPU_MEMORY_TYPE_KV_CACHE, GPU_MEMORY_TYPE_WEIGHTS
 
 from miles.utils.environ import enable_experimental_ft_trainer
 from ..utils.ray_utils import compute_ray_pin_head_options
 from .rollout.rollout_manager import RolloutManager
 
 logger = logging.getLogger(__name__)
+
+
+def get_rollout_offload_tags(args) -> list[str]:
+    """Resolve the rollout allocations released while the trainer is active."""
+    tags = [GPU_MEMORY_TYPE_CUDA_GRAPH]
+    if "kv_cache" in args.offload_rollout_level:
+        tags.append(GPU_MEMORY_TYPE_KV_CACHE)
+    if "weight" in args.offload_rollout_level:
+        tags.append(GPU_MEMORY_TYPE_WEIGHTS)
+    return tags
+
+
+def get_rollout_onload_tags(args) -> tuple[list[str], list[str]]:
+    """Split released rollout allocations around the weight-update window."""
+    offload_tags = get_rollout_offload_tags(args)
+    weight_tags = [GPU_MEMORY_TYPE_WEIGHTS] if GPU_MEMORY_TYPE_WEIGHTS in offload_tags else []
+    inference_tags = [tag for tag in offload_tags if tag != GPU_MEMORY_TYPE_WEIGHTS]
+    return weight_tags, inference_tags
 
 
 def _select_train_group_class():
@@ -217,6 +236,6 @@ def create_rollout_manager(args, pg):
         )
 
     if args.offload_rollout:
-        ray.get(rollout_manager.offload.remote())
+        ray.get(rollout_manager.offload.remote(tags=get_rollout_offload_tags(args)))
 
     return rollout_manager, num_rollout_per_epoch

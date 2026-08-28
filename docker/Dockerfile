@@ -130,9 +130,14 @@ RUN --mount=type=bind,source=docker/verify_transformer_engine.py,target=/tmp/ver
     pip install einops onnx onnxscript pydantic nvdlfw-inspect && \
     python3 /tmp/verify_transformer_engine.py "${TE_CORE_DIST}"
 
+# Dependency patches. Keep each package in its own subdirectory so a patch can
+# never be applied to the wrong installed tree.
+#
 # TE patches (cu13): B300/GB300 FA2 and backward override fixes
 # te_dequantized_backward_override.patch is a hot fix from
 # https://github.com/NVIDIA/TransformerEngine/pull/3141; drop it after TE v2.18.
+# fla/kda_hoist_next_power_of_2.patch is the KDA portion of upstream commit
+# 3c4c54ae; drop it after flash-linear-attention publishes a post-0.4.2 release.
 COPY docker/patch/ /tmp/patches/
 # A `for` loop exits with the status of its LAST iteration, so a patch that fails
 # to apply here used to be swallowed whenever a later one succeeded -- the image
@@ -146,7 +151,18 @@ RUN if [ "${ENABLE_CUDA_13}" = "1" ] && [ -d /tmp/patches/cu13 ]; then \
           exit 1; \
         }; \
       done; \
-    fi && rm -rf /tmp/patches
+    fi && \
+    if [ -d /tmp/patches/fla ]; then \
+      FLA_DIR=$(python -c 'import importlib.util; print(importlib.util.find_spec("fla").submodule_search_locations[0])') && \
+      for p in /tmp/patches/fla/*.patch; do \
+        echo "Applying $(basename $p) to $FLA_DIR"; \
+        patch -d "$FLA_DIR" -p1 < "$p" || { \
+          echo "FLA patch $(basename $p) did not apply cleanly against the installed flash-linear-attention" >&2; \
+          exit 1; \
+        }; \
+      done; \
+    fi && \
+    rm -rf /tmp/patches
 
 # apex
 RUN pip install /tmp/wheels/apex-*.whl

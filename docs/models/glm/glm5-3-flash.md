@@ -1,6 +1,6 @@
 ---
 title: GLM-5.3-Flash
-description: RL recipe for GLM-5.3-Flash, a KDA + DSA hybrid MoE with mHC hyper-connections and NoPE MLA.
+description: Text and vision-language RL recipes for GLM-5.3-Flash, a KDA + DSA hybrid MoE with mHC hyper-connections and NoPE MLA.
 ---
 
 Implementation: [`radixark/miles#2786`](https://github.com/radixark/miles/pull/2786). It goes
@@ -46,6 +46,7 @@ the same tag serves GB300 and x86 nodes.
 ```bash
 hf download zai-org/GLM-5.3-Flash --local-dir /root/models/GLM-5.3-Flash
 hf download --repo-type dataset zhuzilin/dapo-math-17k --local-dir /root/datasets/dapo-math-17k
+hf download --repo-type dataset chenhegu/geo3k_imgurl --local-dir /root/datasets/geo3k_imgurl
 ```
 
 The reference checkpoint has to be converted first — `--ref-load` resolves to
@@ -80,6 +81,38 @@ Smoke slice on one node:
 ```bash
 python scripts/run_glm5_3_flash.py train --num-nodes 1 --num-gpus-per-node 8
 ```
+
+Vision-language smoke on Geo3K uses the same converted language checkpoint and
+the visual weights in the original Hugging Face checkpoint:
+
+```bash
+python scripts/run_glm5_3_flash.py train \
+  --task geo3k \
+  --num-nodes 1 --num-gpus-per-node 8 \
+  --rollout-batch-size 2 --n-samples-per-prompt 2 \
+  --global-batch-size 4 --rollout-max-response-len 512
+```
+
+The Geo3K path uses the model's native dynamic image resize and patch order in
+both Miles and SGLang. On the Megatron side, the original Hugging Face visual
+tower is loaded identically on the embedding pipeline stage, kept frozen, and
+its merged patch embeddings replace the checkpoint's image-token positions.
+Only the already validated language parameters are converted, optimized,
+checkpointed, and synchronized. The reduced-layer checkpoints therefore must
+retain the full `model.visual.*` tensor set as well as `vision_config`.
+Because that frozen tower is deliberately excluded from the optimizer and the
+normal language-weight stream, the B300 VLM recipe offloads only SGLang's KV
+cache and keeps its weights resident. The initial offload honors the same
+`--offload-rollout-level` selection. If a smaller-memory deployment explicitly
+offloads rollout weights, Miles appends the frozen `model.visual.*` tensors from
+the Hugging Face checkpoint to each base sync so the tower is restored.
+
+For B300 (SM103), set `NCCL_NVLS_ENABLE=0`, keep Megatron's attention backend on
+`auto`, and use SGLang's `sdpa` multimodal attention backend. Do not select the
+Hopper-only FA3 path. The CUDA image also backports the KDA portion of upstream
+FLA commit `3c4c54ae`, which hoists `triton.next_power_of_2` out of the KDA JIT
+kernel for Triton 3.7; remove that compatibility patch after a post-0.4.2 FLA
+release is pinned.
 
 | Shape | TP | PP | EP | Rollout engine |
 |---|---|---|---|---|
