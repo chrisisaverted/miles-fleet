@@ -1,11 +1,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
-from sglang.srt.constants import (
-    GPU_MEMORY_TYPE_CUDA_GRAPH,
-    GPU_MEMORY_TYPE_KV_CACHE,
-    GPU_MEMORY_TYPE_WEIGHTS,
-)
+from sglang.srt.constants import GPU_MEMORY_TYPE_CUDA_GRAPH, GPU_MEMORY_TYPE_KV_CACHE, GPU_MEMORY_TYPE_WEIGHTS
 
 from miles.ray.rollout.rollout_manager import RolloutManager, _get_rollout_offload_tags
 
