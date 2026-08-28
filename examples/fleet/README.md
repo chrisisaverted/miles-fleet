@@ -63,7 +63,7 @@ variables) plus secrets. Working examples: [`launch/examples/`](launch/examples/
 ```json
 {
   "name": "miles-vl-qwen38-2node-01",
-  "image": "ghcr.io/fleet-ai/miles-fleet/trainer:97ddfb89",
+  "image": "ghcr.io/fleet-ai/miles-fleet/trainer:5f74853a",
   "command": "bash examples/fleet/launch/run.sh --model-name qwen3.8-27b --mode normal --num-nodes 2 --num-gpus-per-node 8 --max-turns 32 --max-concurrent-envs 16",
   "workers": 2,
   "gpus_per_worker": 8,
@@ -152,7 +152,7 @@ run and resubmit so the queue picks another machine.
 
 ## 8. What has been validated
 
-All on image `trainer:97ddfb89`.
+Smokes on image `trainer:5f74853a` (current); the production runs below launched on its predecessor `97ddfb89`.
 
 | Model | Taskset | Machines | Result |
 |---|---|---|---|
