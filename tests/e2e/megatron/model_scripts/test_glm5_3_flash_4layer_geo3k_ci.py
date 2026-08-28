@@ -10,7 +10,7 @@ import miles.utils.external_utils.command_utils as U
 register_cuda_ci(
     est_time=1800,
     suite="stage-c-8-gpu-h200",
-    labels=["megatron", "model-scripts", "vlm"],
+    labels=["megatron", "model-scripts"],
     disabled="needs a CI image with GLM-5.3-Flash SGLang support; re-enable once that stack lands.",
 )
 
