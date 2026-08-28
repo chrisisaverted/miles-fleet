@@ -1,9 +1,8 @@
 # miles on the Fleet training cluster
 
-How to train a model on Fleet tasks. You write one JSON file describing the
-run and submit it with one command; everything else happens on the cluster.
-The cluster is `fleetai-training` on Nebius: 24 machines, each with 8 B300
-GPUs (268GB per GPU), connected by an InfiniBand fabric.
+Train a model on Fleet tasks: write one JSON file, submit it with one
+command. The cluster is `fleetai-training` on Nebius: 24 machines, 8 B300
+GPUs each (268GB per GPU), InfiniBand between machines.
 
 ## 1. How it works
 
@@ -14,42 +13,20 @@ you ──run JSON──▶ submit_run.py ──▶ cluster queue ──▶ GPU 
                           (log, checkpoints, dumps)
 ```
 
-`submit_run.py` is a stand-in, not the real thing. The platform will get a
-jobs API (POST a run, get back an id, poll its status). Until that exists,
-this script plays the API's part from your laptop: it checks the JSON,
-packages your Fleet login into a cluster secret, writes the Kubernetes
-object, and prints the watch commands. When the jobs API ships, the JSON
-you write stays exactly the same and everything inside the image runs
-unchanged; what changes is who does the submitting. The script goes away,
-kubectl stops being something you need, and status and logs come from API
-calls instead of cluster access. Nothing in this directory except
-`submit_run.py` (and the RayJob template it fills in) will need to change.
+`submit_run.py` fills in for the jobs API until it exists: it validates the
+JSON, packages your Fleet login into a cluster secret, and creates the
+Kubernetes job. When the API ships, the JSON stays the same and the image
+runs unchanged; only the submitting moves from this script to an API call.
 
-Submitting creates a RayJob (a Kubernetes object that KubeRay, the cluster's
-Ray operator, turns into pods). Three kinds of pods come up:
-
-- a **head** pod on a GPU machine. It runs the setup and the training
-  driver, and it also runs the task environments as docker containers.
-- **worker** pods, one per additional GPU machine, when the run uses more
-  than one. They only contribute their GPUs.
-- a **submitter** pod on a small machine. It kicks off the head's work and
-  relays its log output.
-
-The cluster queue (Kueue) holds the whole set back until enough GPUs are
-free, then starts all pods at once. The GPU pods run privileged: the
-cluster's default security profile blocks a system call the inference
-engines need, and privileged mode also gives the pods the InfiniBand
-devices that carry traffic between machines at full speed. When a run
-finishes, its pods are torn down immediately, so the GPUs come back right
-away.
-
-On the head, setup runs first: pull the taskset, turn it into training
-data, download the docker images the tasks need (every registry call
-retries for five minutes, because the Fleet registry has short outages),
-and download the model onto the shared filesystem (a one-time cost; later
-runs reuse it, and a lock keeps two runs from downloading at once). Then
-your command runs. Everything under `/mnt/sfs` survives after the run;
-everything else on the pods is wiped.
+A run is three kinds of pods: a **head** on a GPU machine (runs setup, the
+training driver, and the task environments as docker containers),
+**workers** on additional GPU machines (GPUs only), and a small
+**submitter** that relays logs. The queue (Kueue) starts them all at once
+when enough GPUs are free, and everything is torn down the moment the run
+ends. Setup on the head pulls the taskset, builds the training data,
+downloads the task docker images and the model (the model lands on the
+shared filesystem once and is reused). Then your command runs. Everything
+under `/mnt/sfs` survives the run.
 
 ```bash
 kubectl --context nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6 -n fleet-train-jobs get rayjob <name> -w
@@ -70,7 +47,7 @@ Everything lives under `examples/fleet/`; miles itself is unmodified.
 | `prepare_dataset.py` | taskset to train/eval JSONL |
 | `launch/run_fleet.py` | the training launcher; recipe table keyed by `--model-name` |
 | `launch/run.sh` | on-cluster setup (credentials, taskset, images, model), then runs the launcher |
-| `launch/submit_run.py` | run JSON to RayJob (section 3) |
+| `launch/submit_run.py` | run JSON to RayJob |
 | `launch/examples/` | working run JSONs |
 
 ## 3. The run JSON
@@ -95,27 +72,23 @@ variables) plus secrets. Working examples: [`launch/examples/`](launch/examples/
 
 | Field | What it is |
 |---|---|
-| `name` | names everything about the run: the job, the folder on `/mnt/sfs`, the WandB group. Lowercase letters, digits, dashes. |
-| `image` | which trainer image to run (from step 5) |
-| `command` | what to run on the head. `run.sh` does the setup and then starts training with the arguments you give it. One rule: no apostrophes. |
-| `workers` | how many 8-GPU machines the run uses. 1 for a single machine, 2 to span two. |
+| `name` | names the job, the folder on `/mnt/sfs`, and the WandB group. Lowercase letters, digits, dashes. |
+| `image` | which trainer image to run (section 5) |
+| `command` | what to run on the head. `run.sh` does setup, then starts training with these arguments. One rule: no apostrophes. |
+| `workers` | how many 8-GPU machines |
 | `gpus_per_worker` | GPUs per machine, normally 8 |
-| `env` | environment variables handed to every pod. `run.sh` reads `TASKSET_REF` (which taskset) and `TASK_LIMIT` (how many tasks to sample; "0" means all). `RUN_ID` is filled in from `name` automatically. |
-| `secrets` | names of cluster secrets whose contents become environment variables. `wandb-api` is always added. Your Fleet login is packaged into a fresh secret at submit time. |
-
-The pool of machines defaults to `gpu-b300`; there is nothing to set.
+| `env` | environment variables for every pod. `run.sh` reads `TASKSET_REF` and `TASK_LIMIT` ("0" = all tasks). `RUN_ID` defaults to `name`. |
+| `secrets` | cluster secrets exposed as environment variables. `wandb-api` is always added; your Fleet login becomes a fresh secret at submit time. |
 
 ## 4. One-time setup
 
-- kubeconfig for the cluster:
+- kubeconfig:
   `nebius mk8s cluster get-credentials --id mk8scluster-e04zw4ye1k7wczqdw6 --external`
-  (needs the Nebius CLI logged in).
-- A valid Fleet login: check with `flt auth status`, renew with
-  `flt auth login registry-alpha.fleetai.me`. The login expires after a few
-  days; submitting with an expired one makes the run die early with a 401.
-- For tasksets whose data lives on s3 (evaluation-benchmark yes, ade-bench
-  no): export `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` before
-  submitting.
+- Fleet login: check `flt auth status`, renew with
+  `flt auth login registry-alpha.fleetai.me`. It expires after a few days;
+  an expired login kills the run at startup with a 401.
+- For tasksets with s3 data (evaluation-benchmark yes, ade-bench no):
+  export `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
 
 ## 5. Build the image
 
@@ -124,78 +97,61 @@ bash examples/fleet/launch/build_image.sh fleet-integration
 # -> ghcr.io/fleet-ai/miles-fleet/trainer:<8-char sha of that ref>
 ```
 
-The build runs on the cluster and clones the branch from GitHub, so push
-first; local uncommitted changes never make it into an image. Takes about
-20 minutes. You only need a new image when python under `examples/fleet/`
-changes.
+The build clones the branch from GitHub, so push first. About 20 minutes.
+A new image is only needed when python under `examples/fleet/` changes.
 
-The base image is pinned to a dated tag in the Dockerfile. Do not "update"
-it to the moving `dev-cu12` tag: upstream repushes it, and one repush
-(2026-08-27) shipped an sglang that kills every engine at startup. Move the
-pin only together with a `debug_minimal` run on the new image.
+The Dockerfile builds on a fixed version of the upstream miles image, not
+the `dev-cu12` tag, because upstream overwrites that tag and one overwrite
+broke the inference engines. If you change the pinned version, run
+`--mode debug_minimal` on the new image before using it.
 
 ## 6. Submit a run
 
 ```bash
 ./examples/fleet/launch/submit_run.py examples/fleet/launch/examples/tool-use-qwen38.json
-./examples/fleet/launch/submit_run.py examples/fleet/launch/examples/vision-qwen38-27b-2node.json
-./examples/fleet/launch/submit_run.py my-run.json --dry-run   # print what would be applied, apply nothing
+./examples/fleet/launch/submit_run.py my-run.json --dry-run   # print, apply nothing
 ```
 
-On any new image, model, or machine type, run with `--mode debug_minimal`
-in the command first: it does two tiny training rounds end to end in about
-40 minutes and catches almost every problem a long run would hit.
-`workers: 2` (or more) spans machines over the InfiniBand fabric (the
-cluster measured 473 GB/s between racks), so multi-machine training runs at
-full speed.
+On any new image, model, or machine type, first run with
+`--mode debug_minimal` in the command: two tiny training rounds end to end,
+about 40 minutes, catches almost everything a long run would hit.
 
 ## 7. Watch a run
 
 ```bash
 kubectl --context nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6 -n fleet-train-jobs logs -f job/<name>
-# the same log persists at /mnt/sfs/miles-fleet/<name>/driver.log
-#   (it is appended across resubmits of the same name; check timestamps)
+# persistent copy: /mnt/sfs/miles-fleet/<name>/driver.log
 # metrics: https://wandb.ai/thefleet/miles-run_fleet, group = <name>
-# checkpoints: /mnt/sfs/miles-fleet/<name>/checkpoints, written every 20 rounds;
+# checkpoints: /mnt/sfs/miles-fleet/<name>/checkpoints, every 20 rounds;
 #   resubmitting the same name resumes from the latest one
 ```
 
-In the first training round, check four things in order: task episodes are
-being generated (`POST /generate` lines in the log); the first training step
-prints numbers (a loss near zero next to a nonzero grad norm is expected
-here, not a bug); generation starts again after the training step; and at
-round 20 a checkpoint shows up on `/mnt/sfs`. One full round at maximum
-context is roughly 2 hours of generation plus 10 minutes of training, so a
-quiet training log usually means generation is busy, not that the run is
-stuck. Long-running logs fill up with engine chatter; when the log tail
-stops showing round summaries, read the run's progress from WandB instead.
+First round, check in order: episodes generating (`POST /generate` in the
+log), first training step prints numbers (loss near zero with nonzero grad
+norm is expected), generation resumes after the step, checkpoint at round
+20. A round at full context is roughly 2h generation + 10min training, so a
+quiet log usually means generation is busy. The log fills with engine
+chatter over time; read progress from WandB.
 
-If the job never starts: `kubectl describe workload <name>` says what it is
-waiting for and which run currently holds the machines. One cluster quirk:
-the queue only counts GPUs used by queued work, so a pod can be sent to a
-machine that something unqueued (a dev pod, an inference job) already
-fills. If a pod sits Pending on a machine that looks free, delete the run
-and resubmit; the queue picks a machine again.
+If the job never starts, `kubectl describe workload <name>` says what it is
+waiting for. If a pod sits Pending on a machine that looks free, something
+outside the queue (a dev pod, an inference job) is holding it; delete the
+run and resubmit so the queue picks another machine.
 
-Failures we have actually hit, and what fixed them:
+Issues you can still hit:
 
 | What the log says | What it means | What to do |
 |---|---|---|
-| `docker login ... 401 Unauthorized` right after start | your Fleet login expired | `flt auth login`, resubmit |
-| `registry API: status 502`, repeated | the Fleet registry is down (outages of 4 to 20+ minutes have happened) | setup retries for 5 minutes on its own; if the run still dies, resubmit after the registry recovers |
-| `No user query found in messages`, every episode thrown away | the model's built-in chat template rejects how tool results are replayed | the launcher already substitutes a fixed template; do not remove `--chat-template-path` |
-| `FlashAttention v3 Backend requires SM>=80 and SM<=90` | an attention library that only supports older GPUs, on a Blackwell GPU | the launcher already uses `triton` for the engines and `sdpa` for training; keep them |
-| `AttributeError: server_args ... is read-only`, every engine dies at startup | the image was built from the moving `dev-cu12` base after upstream repushed it | build from the pinned base (section 5) |
-| `torch_memory_saver ... resume ... out of memory`, all engines die right after a training step | `--fsdp-cpu-offload` together with colocation: the trainer never gives the GPU back | do not add the flag (bug in miles, reported upstream); the 27B fits without it |
-| `ray ... node running low on memory` | the machine's RAM (not GPU memory) filled up; the 27B parks ~1.15TB there between training steps | pod memory is already sized for this in `submit_run.py` |
-| every reward is zero, log full of reset warnings | the reset warnings are a known harmless platform issue, not the cause | look for parse failures or template errors instead |
-| one engine serves all `POST /generate` lines; the other GPUs sit idle during generation | miles's router picks the least-busy engine, and ties go to the first one; episodes spend most time inside tool calls, so the engines are almost always tied | raise `--fleet-max-concurrent-envs` in the command (more episodes in flight spreads the load and shortens the round); a router fix is pending upstream |
+| `docker login ... 401 Unauthorized` at start | Fleet login expired | `flt auth login`, resubmit |
+| `registry API: status 502`, repeated | Fleet registry outage (4 to 20+ minutes happen) | setup retries for 5 minutes on its own; if the run dies anyway, resubmit later |
+| every reward is zero, log full of reset warnings | the reset warnings are harmless platform noise, not the cause | look for parse failures or template errors instead |
+| one engine serves all `POST /generate`; other GPUs idle during generation | miles's router sends tied (idle) engines' requests to the first one, and episodes spend most time in tool calls, so engines are usually tied | raise `--fleet-max-concurrent-envs` in the command; router fix pending upstream |
 
 ## 8. What has been validated
 
-All on image `trainer:97ddfb89` unless noted.
+All on image `trainer:97ddfb89`.
 
 | Model | Taskset | Machines | Result |
 |---|---|---|---|
 | Qwen3.8-27B | ade-bench (text) | 1 | debug_minimal passed; production run launched 2026-08-28 (`miles-tu-prod-01`) |
-| Qwen3.8-27B | evaluation-benchmark (vision) | 2 | debug_minimal passed; traffic between machines verified on InfiniBand with GPUDirect (`via NET/IB/GDRDMA` in the log); production run launched 2026-08-28 (`miles-vl-prod-01`) |
+| Qwen3.8-27B | evaluation-benchmark (vision) | 2 | debug_minimal passed; traffic between machines confirmed on InfiniBand (`via NET/IB/GDRDMA`); production run launched 2026-08-28 (`miles-vl-prod-01`) |
