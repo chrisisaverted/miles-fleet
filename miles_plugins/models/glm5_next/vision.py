@@ -29,15 +29,11 @@ from typing import TYPE_CHECKING
 
 import torch
 from safetensors import safe_open
-from torch import nn
-from transformers.activations import ACT2FN
 from transformers.models.glm_ocr.modeling_glm_ocr import (
-    GlmOcrRMSNorm,
-    GlmOcrVisionAttention,
-    GlmOcrVisionPatchEmbed,
-    GlmOcrVisionRotaryEmbedding,
-    get_vision_cu_seqlens,
-    get_vision_position_ids,
+    GlmOcrVisionBlock,
+    GlmOcrVisionMlp,
+    GlmOcrVisionModel,
+    GlmOcrVisionPatchMerger,
 )
 
 from miles.utils.hf_config import load_hf_config
@@ -48,13 +44,9 @@ if TYPE_CHECKING:
 _VISUAL_PREFIX = "model.visual."
 
 
-class Glm5NextVisionMLP(nn.Module):
+class Glm5NextVisionMLP(GlmOcrVisionMlp):
     def __init__(self, config) -> None:
-        super().__init__()
-        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=config.attention_bias)
-        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=config.attention_bias)
-        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=config.attention_bias)
-        self.act_fn = ACT2FN[config.hidden_act]
+        super().__init__(config, bias=config.attention_bias)
         self.swiglu_limit = config.swiglu_limit
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -63,41 +55,20 @@ class Glm5NextVisionMLP(nn.Module):
         return self.down_proj(self.act_fn(gate) * up)
 
 
-class Glm5NextVisionBlock(nn.Module):
+class Glm5NextVisionBlock(GlmOcrVisionBlock):
     def __init__(self, config) -> None:
-        super().__init__()
-        self.norm1 = GlmOcrRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.norm2 = GlmOcrRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.attn = GlmOcrVisionAttention(config)
+        super().__init__(config)
         self.mlp = Glm5NextVisionMLP(config)
 
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        *,
-        cu_seqlens: torch.Tensor,
-        position_embeddings: tuple[torch.Tensor, torch.Tensor],
-    ) -> torch.Tensor:
-        hidden_states = hidden_states + self.attn(
-            self.norm1(hidden_states),
-            cu_seqlens=cu_seqlens,
-            position_embeddings=position_embeddings,
-        )
-        return hidden_states + self.mlp(self.norm2(hidden_states))
 
-
-class Glm5NextVisionPatchMerger(nn.Module):
+class Glm5NextVisionPatchMerger(GlmOcrVisionPatchMerger):
     def __init__(self, config) -> None:
-        super().__init__()
-        dim = config.out_hidden_size
-        context_dim = config.projection_intermediate_size
-        self.proj = nn.Linear(dim, dim, bias=False)
-        self.post_projection_norm = nn.LayerNorm(dim)
-        self.gate_proj = nn.Linear(dim, context_dim, bias=False)
-        self.up_proj = nn.Linear(dim, context_dim, bias=False)
-        self.down_proj = nn.Linear(context_dim, dim, bias=False)
-        self.act1 = nn.GELU()
-        self.act_fn = ACT2FN[config.hidden_act]
+        super().__init__(
+            dim=config.out_hidden_size,
+            context_dim=config.projection_intermediate_size,
+            hidden_act=config.hidden_act,
+            bias=False,
+        )
         self.swiglu_limit = config.swiglu_limit
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -107,51 +78,13 @@ class Glm5NextVisionPatchMerger(nn.Module):
         return self.down_proj(self.act_fn(gate) * up)
 
 
-class Glm5NextVisionModel(nn.Module):
+class Glm5NextVisionModel(GlmOcrVisionModel):
     """Vision-only portion of the official GLM-5.3 model."""
 
     def __init__(self, config) -> None:
-        super().__init__()
-        self.config = config
-        self.spatial_merge_size = config.spatial_merge_size
-        self.patch_embed = GlmOcrVisionPatchEmbed(config)
-        head_dim = config.hidden_size // config.num_heads
-        self.rotary_pos_emb = GlmOcrVisionRotaryEmbedding(head_dim // 2)
-        self.blocks = nn.ModuleList(Glm5NextVisionBlock(config) for _ in range(config.depth))
+        super().__init__(config)
+        self.blocks = torch.nn.ModuleList(Glm5NextVisionBlock(config) for _ in range(config.depth))
         self.merger = Glm5NextVisionPatchMerger(config)
-        self.downsample = nn.Conv2d(
-            in_channels=config.hidden_size,
-            out_channels=config.out_hidden_size,
-            kernel_size=config.spatial_merge_size,
-            stride=config.spatial_merge_size,
-        )
-        self.post_layernorm = GlmOcrRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-
-    def forward(self, pixel_values: torch.Tensor, image_grid_thw: torch.Tensor) -> torch.Tensor:
-        position_ids = get_vision_position_ids(image_grid_thw, self.spatial_merge_size)
-        cu_seqlens = get_vision_cu_seqlens(image_grid_thw)
-        hidden_states = self.patch_embed(pixel_values)
-        rotary_emb = self.rotary_pos_emb(position_ids)
-        rotary_emb = torch.cat((rotary_emb, rotary_emb), dim=-1)
-        position_embeddings = (rotary_emb.cos(), rotary_emb.sin())
-
-        for block in self.blocks:
-            hidden_states = block(
-                hidden_states,
-                cu_seqlens=cu_seqlens,
-                position_embeddings=position_embeddings,
-            )
-
-        hidden_states = self.post_layernorm(hidden_states)
-        hidden_states = hidden_states.view(
-            -1,
-            self.spatial_merge_size,
-            self.spatial_merge_size,
-            hidden_states.shape[-1],
-        )
-        hidden_states = hidden_states.permute(0, 3, 1, 2)
-        hidden_states = self.downsample(hidden_states).view(-1, self.config.out_hidden_size)
-        return self.merger(hidden_states)
 
 
 @contextmanager
@@ -250,8 +183,8 @@ def wire_glm5_next_visual(model: GPTModel, hf_checkpoint: str) -> None:
         with torch.no_grad():
             image_embeddings = model.__dict__["_glm5_next_visual"](
                 pixel_values.to(device=device, dtype=model.config.params_dtype),
-                image_grid_thw.to(device=device),
-            )
+                grid_thw=image_grid_thw.to(device=device),
+            ).pooler_output
         image_positions = torch.nonzero(input_ids.reshape(-1) == image_token_id, as_tuple=False).flatten()
         if image_positions.numel() != image_embeddings.shape[0]:
             raise ValueError(

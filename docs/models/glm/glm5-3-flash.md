@@ -103,19 +103,17 @@ checkpointed, and synchronized. The reduced-layer checkpoints therefore must
 retain the full `model.visual.*` tensor set as well as `vision_config`.
 Because that frozen tower is deliberately excluded from the optimizer and the
 normal language-weight stream, the B300 VLM recipe offloads only SGLang's KV
-cache and keeps its weights resident. The initial offload honors the same
-`--offload-rollout-level` selection. For a colocated deployment that explicitly
-offloads rollout weights, Miles appends the frozen `model.visual.*` tensors from
-the Hugging Face checkpoint to each base sync so the tower is restored. The B300
-recipe below uses KV-only offload; validate the more expensive full-weight mode
-on the target topology before production use.
+cache and keeps its weights resident. SGLang loads the same Hugging Face visual
+tower at startup; only the language weights change during training. Validate
+the more expensive full-weight offload mode on the target topology before
+production use.
 
 For B300 (SM103), set `NCCL_NVLS_ENABLE=0`, keep Megatron's attention backend on
 `auto`, and use SGLang's `sdpa` multimodal attention backend. Do not select the
-Hopper-only FA3 path. The CUDA image also backports the KDA portion of upstream
-FLA commit `3c4c54ae`, which hoists `triton.next_power_of_2` out of the KDA JIT
-kernel for Triton 3.7; remove that compatibility patch once the pinned FLA
-release contains the upstream fix.
+Hopper-only FA3 path. The validated environment applies the KDA portion of
+upstream FLA commit `3c4c54ae`, which hoists `triton.next_power_of_2` out of the
+KDA JIT kernel for Triton 3.7; remove that compatibility patch once the pinned
+FLA release contains the upstream fix.
 
 | Shape | TP | PP | EP | Rollout engine |
 |---|---|---|---|---|

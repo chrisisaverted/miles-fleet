@@ -34,17 +34,6 @@ from .update_weight_from_distributed.broadcast import (
 logger = logging.getLogger(__name__)
 
 
-def _should_sync_frozen_mm_tower(args: Namespace) -> bool:
-    provider = getattr(args, "custom_model_provider_path", None) or ""
-    if "inkling_mm_model_provider" in provider:
-        return True
-    return (
-        "glm5_next_vlm_model_provider" in provider
-        and getattr(args, "offload_rollout", False)
-        and "weight" in getattr(args, "offload_rollout_level", ())
-    )
-
-
 def _pp_assemble_full_adapter(
     hf_named_tensors: list[tuple[str, torch.Tensor]],
 ) -> list[tuple[str, torch.Tensor]]:
@@ -332,13 +321,15 @@ class UpdateWeightFromTensor:
         dist.barrier(group=get_gloo_group())
 
     def _mm_tower_named_tensors(self) -> list[tuple[str, torch.Tensor]] | None:
-        """Return frozen tower tensors required by colocated base synchronization.
-
-        Every gather-group rank contributes the full tower set because the
-        colocated sender requires homogeneous per-rank bucket counts. Tensors are
-        read from the local HF checkpoint once and cached on CPU.
-        """
-        if not _should_sync_frozen_mm_tower(self.args):
+        """Frozen vision/audio tower tensors to append to every base sync (see
+        __init__ comment). Returns None when the run has no MM towers. EVERY
+        gather-group rank contributes the full tower set (read once from its local
+        HF checkpoint, the same bytes the engine loaded at boot): the colocated
+        send requires homogeneous per-rank bucket counts (num_dtypes is taken from
+        rank 0 and indexed into every rank's list), so a src-only contribution
+        breaks assembly. The duplicates are ~15MB/rank and load idempotently."""
+        provider = getattr(self.args, "custom_model_provider_path", None) or ""
+        if "inkling_mm_model_provider" not in provider:
             return None
         if self._mm_tower_cache is None:
             if self._ipc_gather_group is not None:
@@ -363,9 +354,10 @@ class UpdateWeightFromTensor:
                         for k in keys:
                             cache.append((k, f.get_tensor(k)))
                 logger.info(
-                    "mm tower sync: caching %d tower tensors from %s",
+                    "mm tower sync: caching %d tower tensors from %s: %s",
                     len(cache),
                     ckpt_dir,
+                    [k for k, _ in cache],
                 )
                 self._mm_tower_cache = cache
             else:

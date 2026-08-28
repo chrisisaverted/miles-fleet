@@ -3,6 +3,7 @@ from types import ModuleType, SimpleNamespace
 
 import torch
 from tests.ci.ci_register import register_cpu_ci
+from transformers.models.glm_ocr.configuration_glm_ocr import GlmOcrVisionConfig
 
 from miles_plugins.models.glm5_next import vision as vision_module
 from miles_plugins.models.glm5_next.vision import Glm5NextVisionModel
@@ -11,7 +12,7 @@ register_cpu_ci(est_time=20, suite="stage-a-cpu", labels=[])
 
 
 def test_glm5_next_visual_tower_emits_one_embedding_per_merged_patch():
-    config = SimpleNamespace(
+    config = GlmOcrVisionConfig(
         attention_bias=True,
         attention_dropout=0.0,
         depth=1,
@@ -33,7 +34,7 @@ def test_glm5_next_visual_tower_emits_one_embedding_per_merged_patch():
     pixel_values = torch.randn(4, config.in_channels * config.temporal_patch_size * config.patch_size**2)
     image_grid_thw = torch.tensor([[1, 2, 2]])
 
-    output = visual(pixel_values, image_grid_thw)
+    output = visual(pixel_values, grid_thw=image_grid_thw).pooler_output
 
     assert output.shape == (1, config.out_hidden_size)
     assert output.isfinite().all()
