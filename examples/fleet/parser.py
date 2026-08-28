@@ -24,6 +24,13 @@ Kimi-K2 native (multi-token specials):
   <|tool_calls_section_end|>
   Where {name} may carry a "functions." prefix and ":N" id suffix.
 
+GLM-4.6 family (same <tool_call> tag, name line + arg pairs):
+- <tool_call>name
+  <arg_key>key</arg_key>
+  <arg_value>value</arg_value>
+  </tool_call>
+  String values are raw text, non-strings are JSON; both are type-coerced.
+
 Handles missing closing tags (e.g., when </tool_call> is the stop string)
 and repairs common JSON issues like missing trailing braces.
 """
@@ -89,6 +96,17 @@ _XML_FN_RE = re.compile(r"<function=([\w.\-]+)>(.*?)(?:</function>|\Z)", re.DOTA
 _XML_PARAM_RE = re.compile(r"<parameter=([\w.\-]+)>\n?(.*?)\n?</parameter>", re.DOTALL)
 
 
+# GLM-4.6 family grammar (chat_template.jinja "output the function name and
+# arguments within the following XML format"):
+#   <tool_call>NAME
+#   <arg_key>KEY</arg_key>
+#   <arg_value>VALUE</arg_value>   (string values raw, non-strings as JSON)
+#   ...
+#   </tool_call>
+# Same outer <tool_call> tag, payload is a bare name line + arg_key/arg_value pairs.
+_GLM_ARG_RE = re.compile(r"<arg_key>\s*(.*?)\s*</arg_key>\s*<arg_value>\s*(.*?)\s*(?:</arg_value>|\Z)", re.DOTALL)
+
+
 def _coerce_param(raw: str) -> Any:
     """JSON-literal values (numbers, bools, null, objects, arrays) become
     typed; anything else stays a raw string. The grammar itself is untyped,
@@ -109,6 +127,31 @@ def _parse_xml_function_call(text: str) -> Optional[Dict[str, Any]]:
         return None
     args = {k: _coerce_param(v) for k, v in _XML_PARAM_RE.findall(m.group(2))}
     return {"name": name, "arguments": args}
+
+
+def _parse_glm_call(payload: str) -> Optional[Dict[str, Any]]:
+    """Parse a GLM-family <tool_call> payload: name + arg_key/arg_value pairs.
+
+    GLM-4.6 puts the name on its own line; GLM-4.7 emits everything inline
+    (`<tool_call>bash<arg_key>command</arg_key><arg_value>ls</arg_value>`,
+    observed on zai-org/GLM-4.7-Flash 2026-08-22). Both shapes reduce to:
+    the name is whatever precedes the first <arg_key>.
+
+    Without <arg_key> pairs the payload is claimed only when it is a single
+    name-like token (a zero-argument call); anything else stays unparsed so
+    prose inside stray tags still counts as a parse failure.
+    """
+    payload = payload.strip()
+    if "<arg_key>" not in payload:
+        head = payload.split("\n", 1)[0].strip()
+        if head and head == payload and re.fullmatch(r"[\w.\-]+", head):
+            return {"name": head, "arguments": {}}
+        return None
+    head = payload.split("<arg_key>", 1)[0].strip()
+    if not head or not re.fullmatch(r"[\w.\-]+", head):
+        return None
+    args = {k: _coerce_param(v) for k, v in _GLM_ARG_RE.findall(payload)}
+    return {"name": head, "arguments": args}
 
 
 def _parse_kimi_call(action: str) -> Optional[Dict[str, Any]]:
@@ -148,10 +191,14 @@ def parse_tool_call(action: str) -> Optional[Dict[str, Any]]:
         if match:
             parsed = _try_parse_json(match.group(1))
             if parsed is None:
-                # Same tag, non-JSON payload: Qwen3.6's XML-function grammar.
+                # Same tag, non-JSON payload: Qwen3.6's XML-function grammar,
+                # then GLM-4.6's name-line + arg_key/arg_value grammar.
                 xml = _parse_xml_function_call(match.group(1))
                 if xml is not None:
                     return xml
+                glm = _parse_glm_call(match.group(1))
+                if glm is not None:
+                    return glm
                 continue
             # Normalize keys
             name = parsed.get("name") or parsed.get("tool")

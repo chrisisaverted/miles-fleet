@@ -18,12 +18,13 @@ RUN --mount=type=secret,id=gh_token \
     && cd /src && git checkout -q ${PLATFORM_REF} \
     && cd registry && CGO_ENABLED=0 go build -o /flt ./cmd/flt
 
-# Pinned to a dated tag, never the moving dev-cu12 (upstream repushes it and
-# a repush once shipped an sglang the then-current miles code could not
-# start engines on). The pin and the miles merge-base move TOGETHER: this
-# tag matches upstream main as of the 2026-08-28 fast-forward (sglang
-# 0.5.18). Move the pin only together with a debug_minimal smoke.
-FROM radixark/miles:dev-cu12-202608281709
+# glm53-bu branch: base is the GLM-5.3 pairing image (miles + the
+# sglang-miles-glm53next branch carrying the GLM-5.3 model port and its
+# image processor, sgl-project/sglang#36833), digest-pinned because the tag
+# moves. This tree replaces /root/miles with our branch, which includes
+# upstream PR #2792 (GLM-5.3 vision RL). Move the pin only together with a
+# debug_minimal smoke.
+FROM radixark/miles@sha256:66725f740a6013b00d27e21fdfd480a24b0d3b5c61840342e9405bf1e09e5162
 ARG PLATFORM_REF=72e656c948ab3dbc018c844b76b93bfb297f2061
 
 # docker CLI only (daemon = dind sidecar via DOCKER_HOST)
