@@ -107,8 +107,15 @@ broke the inference engines. If you change the pinned version, run
 
 ## 6. Submit a run
 
+The two runs we train today, exactly as launched:
+
 ```bash
+# text tool use: Qwen3.8-27B on ade-bench, 1 machine
 ./examples/fleet/launch/submit_run.py examples/fleet/launch/examples/tool-use-qwen38.json
+
+# vision computer use: Qwen3.8-27B on evaluation-benchmark, 2 machines (export AWS keys first)
+./examples/fleet/launch/submit_run.py examples/fleet/launch/examples/vision-qwen38-27b-2node.json
+
 ./examples/fleet/launch/submit_run.py my-run.json --dry-run   # print, apply nothing
 ```
 
@@ -137,15 +144,6 @@ If the job never starts, `kubectl describe workload <name>` says what it is
 waiting for. If a pod sits Pending on a machine that looks free, something
 outside the queue (a dev pod, an inference job) is holding it; delete the
 run and resubmit so the queue picks another machine.
-
-Issues you can still hit:
-
-| What the log says | What it means | What to do |
-|---|---|---|
-| `docker login ... 401 Unauthorized` at start | Fleet login expired | `flt auth login`, resubmit |
-| `registry API: status 502`, repeated | Fleet registry outage (4 to 20+ minutes happen) | setup retries for 5 minutes on its own; if the run dies anyway, resubmit later |
-| every reward is zero, log full of reset warnings | the reset warnings are harmless platform noise, not the cause | look for parse failures or template errors instead |
-| one engine serves all `POST /generate`; other GPUs idle during generation | miles's router sends tied (idle) engines' requests to the first one, and episodes spend most time in tool calls, so engines are usually tied | raise `--fleet-max-concurrent-envs` in the command; router fix pending upstream |
 
 ## 8. What has been validated
 
