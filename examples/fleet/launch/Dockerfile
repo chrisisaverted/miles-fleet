@@ -18,13 +18,12 @@ RUN --mount=type=secret,id=gh_token \
     && cd /src && git checkout -q ${PLATFORM_REF} \
     && cd registry && CGO_ENABLED=0 go build -o /flt ./cmd/flt
 
-# Pinned to a dated tag, not the moving dev-cu12: the 2026-08-27T17:24Z
-# dev-cu12 carries an sglang whose ServerArgs is read-only after
-# construction, and miles's engine launcher assigns server_args.host after
-# constructing it, so every engine dies at init. This dated tag is the base
-# of trainer:a871b291, which passed the 2-node fabric smoke on 2026-08-27.
-# Move the pin only together with a debug_minimal smoke.
-FROM radixark/miles:dev-cu12-202608261318
+# Pinned to a dated tag, never the moving dev-cu12 (upstream repushes it and
+# a repush once shipped an sglang the then-current miles code could not
+# start engines on). The pin and the miles merge-base move TOGETHER: this
+# tag matches upstream main as of the 2026-08-28 fast-forward (sglang
+# 0.5.18). Move the pin only together with a debug_minimal smoke.
+FROM radixark/miles:dev-cu12-202608281709
 ARG PLATFORM_REF=72e656c948ab3dbc018c844b76b93bfb297f2061
 
 # docker CLI only (daemon = dind sidecar via DOCKER_HOST)
