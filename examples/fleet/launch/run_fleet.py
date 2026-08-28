@@ -104,6 +104,11 @@ class ScriptArgs(U.ExecuteTrainConfig):
     n_samples_per_prompt: int = 8
     max_turns: int = 32
     max_concurrent_envs: int = 8
+    # Cold boots in flight, kept low on purpose: environments booting
+    # together starve each other past their readiness budgets (measured at
+    # 8), and waiting to boot costs an episode nothing because its wall
+    # clock starts after the environment is up.
+    max_concurrent_prepares: int = 4
     partial_reward: bool = False
     extra_args: str = ""
     data_dir: str = "/root/datasets"
@@ -160,7 +165,7 @@ def execute(args: ScriptArgs):
         f"--fleet-max-turns {2 if debug else args.max_turns} "
         "--fleet-max-tokens-per-turn 4096 "
         f"--fleet-max-concurrent-envs {args.max_concurrent_envs} "
-        "--fleet-max-concurrent-prepares 3 "
+        f"--fleet-max-concurrent-prepares {args.max_concurrent_prepares} "
         "--fleet-episode-timeout-s 2400 "
         "--fleet-tool-output-max-chars 4000 "
         f"{'--fleet-partial-reward ' if args.partial_reward else ''}"
