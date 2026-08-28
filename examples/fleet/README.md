@@ -35,7 +35,12 @@ kubectl --context nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6 -n fleet-train
 
 ## 2. The code
 
-Everything lives under `examples/fleet/`; miles itself is unmodified.
+Everything hangs off one miles hook: the launcher passes
+`--custom-generate-function-path examples.fleet.rollout.generate`, and miles
+calls that function once per sample instead of its own generation. Each call
+runs one full episode against a Fleet task and returns Samples with tokens,
+loss masks, and reward already set. That one hook is why everything lives
+under `examples/fleet/` and miles itself is unmodified.
 
 | File | What it does |
 |---|---|
