@@ -27,7 +27,11 @@ metadata:
 spec:
   suspend: true                      # Kueue unsuspends on gang admission
   shutdownAfterJobFinishes: true
-  ttlSecondsAfterFinished: 86400
+  # 0, not a day: this TTL delays the RAY CLUSTER teardown after the job
+  # finishes, so a nonzero value keeps the GPUs reserved that long (found by
+  # teammates on 2026-08-27: two finished smokes squatting their nodes). The
+  # log survives on SFS and metrics on WandB; nothing needs the dead cluster.
+  ttlSecondsAfterFinished: 0
   # Platform-only entrypoint: the code side (taskset pull, dataset build,
   # image pre-pull, model prep, training) lives in the image and is invoked
   # by the payload command. Single-quoted: no apostrophes in COMMAND.
