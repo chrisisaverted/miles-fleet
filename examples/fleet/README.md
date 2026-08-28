@@ -109,6 +109,11 @@ first — local uncommitted changes never make it into an image. Takes about
 20 minutes. You only need a new image when python under `examples/fleet/`
 changes.
 
+The base image is pinned to a dated tag in the Dockerfile. Do not "update"
+it to the moving `dev-cu12` tag: upstream repushes it, and one repush
+(2026-08-27) shipped an sglang that kills every engine at startup. Move the
+pin only together with a `debug_minimal` run on the new image.
+
 ## 6. Submit a run
 
 ```bash
@@ -158,3 +163,4 @@ Failures we have actually hit, and what fixed them:
 | `torch_memory_saver ... resume ... out of memory`, all engines die right after a training step | `--fsdp-cpu-offload` together with colocation: the trainer never gives the GPU back | do not add the flag (bug in miles, reported upstream); the 27B fits without it |
 | `ray ... node running low on memory` | the machine's RAM (not GPU memory) filled up; the 27B parks ~1.15TB there between training steps | pod memory is already sized for this in `submit_run.py` |
 | every reward is zero, log full of reset warnings | the reset warnings are a known harmless platform issue, not the cause | look for parse failures or template errors instead |
+| one engine serves all `POST /generate` lines; the other GPUs sit idle during generation | miles's router picks the least-busy engine, and ties go to the first one; episodes spend most time inside tool calls, so the engines are almost always tied | raise `--fleet-max-concurrent-envs` in the command (more episodes in flight spreads the load and shortens the round); a router fix is pending upstream |
