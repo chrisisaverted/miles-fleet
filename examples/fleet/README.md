@@ -59,7 +59,7 @@ variables) plus secrets. Working examples: [`launch/examples/`](launch/examples/
 {
   "name": "miles-vl-qwen38-2node-01",
   "image": "ghcr.io/fleet-ai/miles-fleet/trainer:97ddfb89",
-  "command": "bash examples/fleet/launch/run.sh --model-name qwen3.8-27b --mode normal --num-nodes 2 --num-gpus-per-node 8 --max-turns 32 --max-concurrent-envs 16",
+  "command": "bash examples/fleet/launch/run.sh --model-name qwen3.8-27b --mode normal --num-nodes 2 --num-gpus-per-node 8 --max-turns 32",
   "workers": 2,
   "gpus_per_worker": 8,
   "env": {
