@@ -52,12 +52,15 @@ ENV FLEET_FLT=/usr/local/bin/flt
 # the PR). Overlay the PR's three package files, pinned to its head commit,
 # until upstream rebuilds the image. Observed failure without this:
 # ModuleNotFoundError at train start (miles-glm53-smoke, 2026-08-29).
-# The KDA/Triton hotfix upstream PR #2792 names as an environment concern:
-# fla 0.4.2 (in the glm53next base) has KDA kernels this image's Triton
-# refuses to compile ("Unsupported function referenced: next_power_of_2",
-# all 24 train ranks, miles-glm53-smoke 2026-08-29 08:19). Upstream bumped
-# it in miles main (commit dbbab1566) hours after this base was built.
-RUN pip install --no-deps flash-linear-attention==0.5.2
+# The KDA/Triton hotfix upstream PR #2792 names as an environment concern.
+# The base image vendors an fla build whose KDA kernels call
+# triton.next_power_of_2 inside the kernel, which this Triton refuses
+# ("Unsupported function referenced", all 24 train ranks, 2026-08-29).
+# The fix is fla-org/flash-linear-attention#1108 ("Hoist in-kernel
+# triton.next_power_of_2 to host launchers"), on fla main and in NO PyPI
+# release (0.5.2 does not even ship fla/ops/kda). Remove the vendored tree
+# fully first: a pip swap leaves its untracked kda files behind.
+RUN pip uninstall -y flash-linear-attention     && rm -rf /usr/local/lib/python3.12/dist-packages/fla     && pip install --no-deps --no-build-isolation        "git+https://github.com/fla-org/flash-linear-attention@ad4af37f03a90c38a15df50c6397a55594f5465e"     && python -c "import fla.ops.kda; print('fla kda ops OK, version', __import__('fla').__version__)"
 
 ARG SGLANG_PR_SHA=21572b4470442fe49ea4ff36e64b1118b465c3b0
 RUN SGL=$(python -c "import sglang,os;print(os.path.dirname(sglang.__file__))") \
