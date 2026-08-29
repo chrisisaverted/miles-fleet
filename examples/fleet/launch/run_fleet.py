@@ -113,8 +113,14 @@ _RECIPES: dict[str, _Recipe] = {
     # parser handles. The template always prepends a "Reasoning Effort: Max"
     # system header (tunable via chat_template_kwargs reasoning_effort).
     "glm5.3-flash": _Recipe(
+        # BF16 checkpoint, not the FP8 main repo: the converter's streaming
+        # loader hands FP8 tensors on CPU to a GPU-only dequant kernel
+        # (crash), and the whole-model-per-rank mode that avoids that path
+        # needs 288GB GPUs (GB300); it OOMs at 260.9GB on our 267.7GB B300s.
+        # BF16 needs no dequant, so the memory-safe auto-split conversion
+        # works. Both failures observed on miles-glm53-smoke, 2026-08-29.
         hf_org="zai-org",
-        hf_name="GLM-5.3-Flash",
+        hf_name="GLM-5.3-Flash-BF16",
         tito_model="glm47",
         backend="megatron",
         megatron_model_type="glm5.3-flash",
@@ -234,13 +240,11 @@ def prepare(args: ScriptArgs):
     dist_dir = Path(args.model_dir) / f"{recipe.megatron_model_type}_torch_dist"
     tracker = dist_dir / "latest_checkpointed_iteration.txt"
     if recipe.backend == "megatron" and not (tracker.exists() and tracker.read_text().strip() == "release"):
-        # Verbatim from docs/models/glm/glm5-3-flash.md, NOT U.convert_checkpoint:
-        # the doc command sets CONVERT_KEEP_PP1=1 CUDA_DEVICE_MAX_CONNECTIONS=1,
-        # and without them the FP8 checkpoint's dequant kernel is handed CPU
-        # tensors and every rank dies with "Pointer argument cannot be
-        # accessed from Triton" (observed miles-glm53-smoke 2026-08-29).
+        # No CONVERT_KEEP_PP1: whole-model-per-rank needs 288GB GPUs; the
+        # converter's automatic pipeline split fits our 268GB B300s, and the
+        # BF16 checkpoint avoids the FP8 dequant bug that split mode has.
         U.exec_command_gpu(
-            "CONVERT_KEEP_PP1=1 CUDA_DEVICE_MAX_CONNECTIONS=1 "
+            "CUDA_DEVICE_MAX_CONNECTIONS=1 "
             f"PYTHONPATH={U.repo_base_dir}:/root/Megatron-LM "
             f"torchrun --nproc-per-node {args.num_gpus_per_node} "
             f"{U.repo_base_dir}/tools/convert_hf_to_torch_dist.py "
