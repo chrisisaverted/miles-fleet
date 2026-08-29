@@ -181,7 +181,12 @@ _RECIPES: dict[str, _Recipe] = {
             "--rollout-health-check-interval 300 "
             "--rollout-health-check-timeout 300 "
             "--distributed-timeout-minutes 60 "
-            "--offload-rollout-level kv_cache "
+            # Upstream keeps engine WEIGHTS resident during training
+            # (--offload-rollout-level kv_cache), affordable on its 288GB
+            # GPUs. On our 267.7GB B300s that leaves the trainer ~3GB short
+            # (OOM at 264.7GB, attempt 7, 2026-08-29). Omitting the flag
+            # restores miles's default (offload kv_cache AND weight), which
+            # frees the engine weight shard during the train phase.
             "--custom-model-provider-path "
             "miles_plugins.models.glm5_next.vision.glm5_next_vlm_model_provider "
             "--check-weight-update-equal "
