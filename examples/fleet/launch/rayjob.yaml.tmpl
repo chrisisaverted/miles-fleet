@@ -69,6 +69,10 @@ spec:
           annotations:
             kueue.x-k8s.io/podset-required-topology: topology.nebius.com/tier-2
         spec:
+          # Same class the platform's ft-runs use (value 10000). Without it
+          # our workloads sit at priority 0 and get preempted mid-run by any
+          # ft-run (observed: miles-glm53-smoke evicted 2026-08-29 04:59).
+          priorityClassName: fleet-train-high
           nodeSelector:
             kubernetes.io/os: linux
             workload: ${NODE_WORKLOAD}
@@ -150,6 +154,7 @@ spec:
             annotations:
               kueue.x-k8s.io/podset-required-topology: topology.nebius.com/tier-2
           spec:
+            priorityClassName: fleet-train-high
             nodeSelector:
               kubernetes.io/os: linux
               workload: ${NODE_WORKLOAD}
