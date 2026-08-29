@@ -52,6 +52,13 @@ ENV FLEET_FLT=/usr/local/bin/flt
 # the PR). Overlay the PR's three package files, pinned to its head commit,
 # until upstream rebuilds the image. Observed failure without this:
 # ModuleNotFoundError at train start (miles-glm53-smoke, 2026-08-29).
+# The KDA/Triton hotfix upstream PR #2792 names as an environment concern:
+# fla 0.4.2 (in the glm53next base) has KDA kernels this image's Triton
+# refuses to compile ("Unsupported function referenced: next_power_of_2",
+# all 24 train ranks, miles-glm53-smoke 2026-08-29 08:19). Upstream bumped
+# it in miles main (commit dbbab1566) hours after this base was built.
+RUN pip install --no-deps flash-linear-attention==0.5.2
+
 ARG SGLANG_PR_SHA=21572b4470442fe49ea4ff36e64b1118b465c3b0
 RUN SGL=$(python -c "import sglang,os;print(os.path.dirname(sglang.__file__))") \
     && for f in srt/configs/glm5_next.py srt/configs/glm5_next_processing.py srt/multimodal/processors/glm4v.py; do \
