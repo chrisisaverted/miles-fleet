@@ -140,7 +140,12 @@ _RECIPES: dict[str, _Recipe] = {
                 "--expert-model-parallel-size 8 "
                 "--expert-tensor-parallel-size 1 "
             ),
-            # upstream 8x4 shape on 8-GPU nodes
+            # 4x8: upstream's 8x4 row says EP16, but EP16 x PP4 = 64 does
+            # not divide 32 GPUs (trainer init rejects it; attempt 9,
+            # 2026-08-29). EP8 x PP4 = 32 divides exactly. This is also the
+            # practical floor on 267.7GB B300s: the 3-node shape's per-rank
+            # trainer state (233GB measured) leaves too little for
+            # activations (OOM, attempts 7-8); 32 ranks fit with headroom.
             (4, 8): (
                 "--tensor-model-parallel-size 8 "
                 "--sequence-parallel "
@@ -148,7 +153,7 @@ _RECIPES: dict[str, _Recipe] = {
                 "--decoder-first-pipeline-num-layers 11 "
                 "--decoder-last-pipeline-num-layers 12 "
                 "--context-parallel-size 1 "
-                "--expert-model-parallel-size 16 "
+                "--expert-model-parallel-size 8 "
                 "--expert-tensor-parallel-size 1 "
             ),
         },
