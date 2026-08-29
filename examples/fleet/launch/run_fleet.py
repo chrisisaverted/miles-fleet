@@ -231,13 +231,22 @@ def prepare(args: ScriptArgs):
     U.exec_command_cpu(f"mkdir -p {args.model_dir} {args.data_dir}")
     if not (hf_dir / "config.json").exists():
         U.exec_command_cpu(f"hf download {recipe.hf_org}/{recipe.hf_name} --local-dir {hf_dir}")
-    if recipe.backend == "megatron" and not (Path(args.model_dir) / f"{recipe.megatron_model_type}_torch_dist").exists():
-        U.convert_checkpoint(
-            model_name=recipe.megatron_model_type,
-            megatron_model_type=recipe.megatron_model_type,
-            num_gpus_per_node=args.num_gpus_per_node,
-            dir_dst=args.model_dir,
-            hf_checkpoint=str(hf_dir),
+    dist_dir = Path(args.model_dir) / f"{recipe.megatron_model_type}_torch_dist"
+    tracker = dist_dir / "latest_checkpointed_iteration.txt"
+    if recipe.backend == "megatron" and not (tracker.exists() and tracker.read_text().strip() == "release"):
+        # Verbatim from docs/models/glm/glm5-3-flash.md, NOT U.convert_checkpoint:
+        # the doc command sets CONVERT_KEEP_PP1=1 CUDA_DEVICE_MAX_CONNECTIONS=1,
+        # and without them the FP8 checkpoint's dequant kernel is handed CPU
+        # tensors and every rank dies with "Pointer argument cannot be
+        # accessed from Triton" (observed miles-glm53-smoke 2026-08-29).
+        U.exec_command_gpu(
+            "CONVERT_KEEP_PP1=1 CUDA_DEVICE_MAX_CONNECTIONS=1 "
+            f"PYTHONPATH={U.repo_base_dir}:/root/Megatron-LM "
+            f"torchrun --nproc-per-node {args.num_gpus_per_node} "
+            f"{U.repo_base_dir}/tools/convert_hf_to_torch_dist.py "
+            f"{U.shell_safe_model_args(recipe.megatron_model_type)} "
+            f"--hf-checkpoint {hf_dir} "
+            f"--save {dist_dir}"
         )
 
 
