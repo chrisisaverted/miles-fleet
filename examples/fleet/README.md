@@ -78,7 +78,7 @@ variables) plus secrets. Working examples: [`launch/examples/`](launch/examples/
 | Field | What it is |
 |---|---|
 | `name` | names the job, the folder on `/mnt/sfs`, and the WandB group. Lowercase letters, digits, dashes. |
-| `image` | which trainer image to run (section 5) |
+| `image` | which trainer image to run (section 6) |
 | `command` | what to run on the head. `run.sh` does setup, then starts training with these arguments. One rule: no apostrophes. |
 | `workers` | how many 8-GPU machines |
 | `gpus_per_worker` | GPUs per machine, normally 8 |
@@ -95,7 +95,22 @@ variables) plus secrets. Working examples: [`launch/examples/`](launch/examples/
 - For tasksets with s3 data (evaluation-benchmark yes, ade-bench no):
   export `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
 
-## 5. Build the image
+## 5. Pre-stage model weights (optional, saves GPU hours)
+
+```bash
+./examples/fleet/launch/prestage.py zai-org/GLM-5.3-Flash-BF16
+```
+
+Weights live on the shared filesystem and download only once; but by
+default that download happens inside the training job, with the job's GPUs
+sitting idle for its whole duration (1-2 hours for a 300B model). This
+command does the same download as a small job on the CPU machines instead.
+Run it when you plan a run with a model the cluster has not seen; a
+training job submitted afterwards finds the weights ready. It is safe to
+skip and safe to run concurrently with a training job: both sides take the
+same lock.
+
+## 6. Build the image
 
 ```bash
 bash examples/fleet/launch/build_image.sh fleet-integration
@@ -110,7 +125,7 @@ the `dev-cu12` tag, because upstream overwrites that tag and one overwrite
 broke the inference engines. If you change the pinned version, run
 `--mode debug_minimal` on the new image before using it.
 
-## 6. Submit a run
+## 7. Submit a run
 
 The two runs we train today, exactly as launched:
 
@@ -128,7 +143,7 @@ On any new image, model, or machine type, first run with
 `--mode debug_minimal` in the command: two tiny training rounds end to end,
 about 40 minutes, catches almost everything a long run would hit.
 
-## 7. Watch a run
+## 8. Watch a run
 
 ```bash
 kubectl --context nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6 -n fleet-train-jobs logs -f job/<name>
@@ -150,7 +165,7 @@ waiting for. If a pod sits Pending on a machine that looks free, something
 outside the queue (a dev pod, an inference job) is holding it; delete the
 run and resubmit so the queue picks another machine.
 
-## 8. What has been validated
+## 9. What has been validated
 
 Smokes on image `trainer:5f74853a` (current); the production runs below launched on its predecessor `97ddfb89`.
 
