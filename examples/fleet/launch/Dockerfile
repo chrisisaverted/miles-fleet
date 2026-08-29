@@ -46,6 +46,19 @@ RUN --mount=type=secret,id=gh_token \
 COPY --from=flt-builder /flt /usr/local/bin/flt
 ENV FLEET_FLT=/usr/local/bin/flt
 
+# GLM-5.3 vision processor overlay: the miles glm5_next plugin imports
+# sglang.srt.configs.glm5_next_processing, which is added by sglang PR
+# #36833 and is NOT in the glm53next base image (built 2026-08-27, before
+# the PR). Overlay the PR's three package files, pinned to its head commit,
+# until upstream rebuilds the image. Observed failure without this:
+# ModuleNotFoundError at train start (miles-glm53-smoke, 2026-08-29).
+ARG SGLANG_PR_SHA=21572b4470442fe49ea4ff36e64b1118b465c3b0
+RUN SGL=$(python -c "import sglang,os;print(os.path.dirname(sglang.__file__))") \
+    && for f in srt/configs/glm5_next.py srt/configs/glm5_next_processing.py srt/multimodal/processors/glm4v.py; do \
+         curl -fsSL -o "$SGL/$f" "https://raw.githubusercontent.com/sgl-project/sglang/${SGLANG_PR_SHA}/python/sglang/$f" || exit 1; \
+       done \
+    && python -c "from sglang.srt.configs.glm5_next_processing import Glm5NextProcessor; print('glm5_next processor OK')"
+
 # Import smoke: `pip install completed` != `image works`. Pulls the full
 # integration import chain (miles + sglang + fleet_runtime + our modules).
 RUN cd /root/miles \
