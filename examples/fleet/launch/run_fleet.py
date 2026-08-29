@@ -179,8 +179,11 @@ _RECIPES: dict[str, _Recipe] = {
             "--accumulate-allreduce-grads-in-fp32 "
             "--update-weight-buffer-size 1073741824 "
             "--train-memory-margin-bytes 3221225472 "
-            "--offload-train-target disk "
-            "--offload-train-disk-dir /tmp/train_offload "
+            # cpu, not upstream's disk: their Grace hosts have little RAM so
+            # they stream ~1.4TB/node of trainer state to NVMe; our x86
+            # nodes have 2.7TB RAM but only ~956GB node disk, which filled
+            # and killed the offload after step 0 (attempt 10, 2026-08-29).
+            "--offload-train-target cpu "
             "--model-name glm5_next "
             "--qkv-format thd "
             "--rollout-health-check-interval 300 "
