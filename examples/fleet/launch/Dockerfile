@@ -67,6 +67,24 @@ RUN SGL=$(python -c "import sglang,os;print(os.path.dirname(sglang.__file__))") 
     && for f in srt/configs/glm5_next.py srt/configs/glm5_next_processing.py srt/multimodal/processors/glm4v.py; do \
          curl -fsSL -o "$SGL/$f" "https://raw.githubusercontent.com/sgl-project/sglang/${SGLANG_PR_SHA}/python/sglang/$f" || exit 1; \
        done \
+    && python - <<'PATCH'
+# Off-by-one fix, pending upstream (sgl-project/sglang#36833): glm4v.py pairs
+# the client's VERBATIM pretokenized input_ids (AVOID_RETOKENIZE) with an
+# attention_mask computed over decode->retokenize text; any sampled token
+# pair that is not canonical BPE (e.g. "\n"+"\n") makes the mask one short
+# and get_rope_index_glm4v raises IndexError (observed at 8323/36643 tokens,
+# miles-glm53-96k-probe 2026-08-29; local repro in glm-repro/repro.py).
+# For a single unpadded sequence the correct mask is all-ones over the real
+# ids, which the callee builds itself when mask is None.
+import sglang, os
+p = os.path.join(os.path.dirname(sglang.__file__), "srt/multimodal/processors/glm4v.py")
+s = open(p).read()
+old = 'attention_mask=getattr(ret, "attention_mask", None),'
+assert s.count(old) >= 1, "glm4v.py patch anchor not found"
+s = s.replace(old, 'attention_mask=None,  # miles-fleet: ids are verbatim pretokenized; ret mask is over retokenized text (off-by-one)', 1)
+open(p, "w").write(s)
+print("glm4v.py off-by-one patched")
+PATCH
     && python -c "from sglang.srt.configs.glm5_next_processing import Glm5NextProcessor; print('glm5_next processor OK')"
 
 # Import smoke: `pip install completed` != `image works`. Pulls the full
