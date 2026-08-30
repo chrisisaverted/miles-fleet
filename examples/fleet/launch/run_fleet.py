@@ -247,12 +247,24 @@ _RECIPES: dict[str, _Recipe] = {
             "SGLANG_HEALTH_CHECK_TIMEOUT": "1800",
             # Pool for --sglang-mm-feature-transport cuda_ipc above. A full
             # pool silently reverts that request to the CPU pickle path, so
-            # the default 1024 MiB would leave the transport switch doing
-            # nothing on browser episodes carrying tens of screenshots. 16 GiB
-            # is reserved HBM on each engine's base GPU; engines already hold
-            # ~39.6 GB per GPU while asleep during the train phase, and the
-            # 48K train step peaks near 163 GB, so 267.69 GB still fits.
-            "SGLANG_MM_FEATURE_CACHE_MB": "16384",
+            # the 1024 MiB default would leave the transport switch doing
+            # nothing on browser episodes carrying tens of screenshots.
+            #
+            # 4096, not 16384: the pool is NOT free, contrary to what an early
+            # reading of the pre-wake_up memory suggested. Once warm, the
+            # engine processes held 50.4 GB per GPU during the train phase
+            # against 38.8 GB on the CPU-transport path, and that extra ~12 GB
+            # is what a KDA backward kernel then could not find (OOM at
+            # step 2, miles-glm53-6node, 2026-08-30). A few hundred MB of
+            # image features per in-flight request means 4 GiB still covers
+            # the concurrency we run; watch the log for a fallback-to-CPU
+            # message, which is how the pool tells you it is too small.
+            "SGLANG_MM_FEATURE_CACHE_MB": "4096",
+            # The same OOM had 8.91 GB reserved by the caching allocator but
+            # unallocated, i.e. free memory chopped into blocks too small for
+            # the 1.50 GB the kernel asked for. Expandable segments let the
+            # allocator grow one mapping instead of stranding fixed blocks.
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
             "PYTHONFAULTHANDLER": "1",
             "TORCHINDUCTOR_COMPILE_THREADS": "1",
             "TRITON_CACHE_DIR": "/tmp/triton_cache",
