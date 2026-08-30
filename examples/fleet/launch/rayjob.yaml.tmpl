@@ -41,6 +41,16 @@ spec:
     cd /root/miles
     exec ${COMMAND}
     '
+  # The submitter is a helper pod that runs `ray job submit` and streams the
+  # driver log; a retried submitter re-attaches to the same Ray job id rather
+  # than starting a second training run. KubeRay defaults its backoffLimit to
+  # 2, and when those are used up the RayJob is marked Failed and (with
+  # shutdownAfterJobFinishes) the whole cluster is torn down. That is how
+  # miles-glm53-48k-probe died at 4h16m: training was healthy (engines
+  # serving, no OOM, driver log clean to the last second) and a submitter
+  # backoff killed it. 20 keeps a transient submitter fault from discarding
+  # hours of GPU work.
+  backoffLimit: 20
   submitterPodTemplate:
     spec:
       restartPolicy: Never
