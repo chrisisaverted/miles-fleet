@@ -167,6 +167,18 @@ _RECIPES: dict[str, _Recipe] = {
             "--sglang-dsa-decode-backend tilelang "
             "--sglang-kv-cache-dtype bfloat16 "
             "--sglang-mm-attention-backend sdpa "
+            # Move multimodal features between the tokenizer manager, the
+            # scheduler and the 8 TP ranks through a CUDA IPC pool instead of
+            # pickling them through CPU memory. sglang auto-resolves to "cpu"
+            # for any single-node multimodal server (server_args.py:7967), and
+            # that path cost 48% of scheduler wall time against 37% for the
+            # model forward: measured by py-spy stack sampling on
+            # miles-glm53-96k-probe, where mean time-to-first-token was 69.7s
+            # of a 71.8s request. The pickling holds the GIL, which blocks the
+            # asyncio loop and is what made /health_generate time out.
+            # The pool falls back to CPU per tensor when full, so it is sized
+            # well above the 1024 MiB default in env_extra below.
+            "--sglang-mm-feature-transport cuda_ipc "
             "--router-health-success-threshold 1 "
             "--router-health-check-interval-secs 15 "
             "--router-health-failure-threshold 40 "
@@ -210,6 +222,14 @@ _RECIPES: dict[str, _Recipe] = {
             # engines still stall at 1800 the detokenizer is genuinely hung,
             # not slow; that distinction is what this value tests.
             "SGLANG_HEALTH_CHECK_TIMEOUT": "1800",
+            # Pool for --sglang-mm-feature-transport cuda_ipc above. A full
+            # pool silently reverts that request to the CPU pickle path, so
+            # the default 1024 MiB would leave the transport switch doing
+            # nothing on browser episodes carrying tens of screenshots. 16 GiB
+            # is reserved HBM on each engine's base GPU; engines already hold
+            # ~39.6 GB per GPU while asleep during the train phase, and the
+            # 48K train step peaks near 163 GB, so 267.69 GB still fits.
+            "SGLANG_MM_FEATURE_CACHE_MB": "16384",
             "PYTHONFAULTHANDLER": "1",
             "TORCHINDUCTOR_COMPILE_THREADS": "1",
             "TRITON_CACHE_DIR": "/tmp/triton_cache",
