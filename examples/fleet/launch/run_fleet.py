@@ -156,6 +156,29 @@ _RECIPES: dict[str, _Recipe] = {
                 "--expert-model-parallel-size 8 "
                 "--expert-tensor-parallel-size 1 "
             ),
+            # 6x8: the shape to actually train on. The 4-node shape OOMs at
+            # fused_adam._initialize_state, where Adam allocates its two fp32
+            # moment buffers. That cost is fixed per rank (it scales with the
+            # parameters a rank owns, not with batch size or context), and at
+            # 4 nodes it lands 3GB short: trainer 225.7GB + the engines'
+            # resident 38.8GB = 264.5 of 267.69 (the same config cleared it
+            # once and OOM'd the next run, 2026-08-30). TP8 x PP4 = 32 = the
+            # world size, so DP is 1 and Megatron's distributed optimizer has
+            # nobody to shard across. Six stages instead of four cuts the
+            # layers each rank owns from ~11 to ~7.5, so params, grads and
+            # Adam state per rank all drop by about a third.
+            # Layer split: first 7 + 4 middle stages of 8 + last 6 = 45.
+            # EP8 x PP6 = 48 divides the 48 GPUs exactly.
+            (6, 8): (
+                "--tensor-model-parallel-size 8 "
+                "--sequence-parallel "
+                "--pipeline-model-parallel-size 6 "
+                "--decoder-first-pipeline-num-layers 7 "
+                "--decoder-last-pipeline-num-layers 6 "
+                "--context-parallel-size 1 "
+                "--expert-model-parallel-size 8 "
+                "--expert-tensor-parallel-size 1 "
+            ),
         },
         sglang_extra=(
             "--sglang-tp-size 8 "
