@@ -48,9 +48,16 @@ spec:
   # shutdownAfterJobFinishes) the whole cluster is torn down. That is how
   # miles-glm53-48k-probe died at 4h16m: training was healthy (engines
   # serving, no OOM, driver log clean to the last second) and a submitter
-  # backoff killed it. 20 keeps a transient submitter fault from discarding
-  # hours of GPU work.
-  backoffLimit: 20
+  # backoff killed it.
+  #
+  # 3, not 20: the submitter also exits non-zero when the RAY JOB itself
+  # fails, and each retry re-runs the entrypoint from scratch (fresh
+  # RayCluster, ~40 min of boot, then the rollout). At 20 a deterministic
+  # failure such as a train-step OOM burns a day of 32 GPUs retrying itself
+  # (observed on miles-glm53-48k-ipc, 2026-08-30, killed by hand). 3 rides
+  # out a transient submitter fault without turning a real failure into a
+  # retry storm.
+  backoffLimit: 3
   submitterPodTemplate:
     spec:
       restartPolicy: Never
