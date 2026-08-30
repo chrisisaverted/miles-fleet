@@ -202,7 +202,14 @@ _RECIPES: dict[str, _Recipe] = {
         ),
         env_extra={
             "SGLANG_SKIP_CHECKPOINT_LOAD_CHECK": "1",
-            "SGLANG_HEALTH_CHECK_TIMEOUT": "120",
+            # 1800, not 120: the health check 503s when the detokenizer emits
+            # nothing for this many seconds, and with radix cache disabled a
+            # ~90K multi-image re-prefill can starve decode past 120s. At 120
+            # all 4 engines were declared unhealthy and killed (never
+            # respawned) within 46 min on the 96K probe, 2026-08-30. If
+            # engines still stall at 1800 the detokenizer is genuinely hung,
+            # not slow; that distinction is what this value tests.
+            "SGLANG_HEALTH_CHECK_TIMEOUT": "1800",
             "PYTHONFAULTHANDLER": "1",
             "TORCHINDUCTOR_COMPILE_THREADS": "1",
             "TRITON_CACHE_DIR": "/tmp/triton_cache",
