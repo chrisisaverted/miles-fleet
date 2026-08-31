@@ -1,0 +1,81 @@
+{
+  "schema": "fleet.miles.experiment-ledger.v1",
+  "experiment": {
+    "name": "<required:dns-safe-run-name>",
+    "objective": "Qwen3.6-27B two-round Fleet cyber RL smoke",
+    "recorded_at_utc": "<required:RFC3339-timestamp>"
+  },
+  "source": {
+    "miles_repository": "https://github.com/fleet-ai/miles-fleet.git",
+    "miles_commit": "<required:40-hex-commit>",
+    "platform_repository": "https://github.com/fleet-ai/platform.git",
+    "taskdump_exporter_commit": "<required:40-hex-commit>"
+  },
+  "model": {
+    "repository": "Qwen/Qwen3.6-27B",
+    "revision": "6a9e13bd6fc8f0983b9b99948120bc37f49c13e9",
+    "checkpoint_path": "<required:revision-specific-on-cluster-path>"
+  },
+  "data": {
+    "selection_manifest_sha256": "sha256:<required:64-hex-digest>",
+    "taskdump_schema": "fleet.taskdump.v7",
+    "taskdump_sha256": "sha256:<required:64-hex-digest>",
+    "task_count": 129,
+    "taskset_repository": "fleet/cysec1-2-current-gen",
+    "taskset_reference": "registry-alpha.fleetai.me/fleet/cysec1-2-current-gen@sha256:<required:64-hex-digest>"
+  },
+  "runtime": {
+    "trainer_image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:<required:64-hex-digest>",
+    "versions": {
+      "python": "<required:exact-version>",
+      "torch": "<required:exact-version>",
+      "transformers": "<required:exact-version>",
+      "sglang": "<required:exact-version>",
+      "flash_linear_attention": "<required:exact-version>",
+      "ray": "<required:exact-version>",
+      "fleet_runtime": "<required:exact-version>"
+    },
+    "train_attention_backend": "sdpa",
+    "rollout_attention_backend": "triton"
+  },
+  "launch": {
+    "payload_sha256": "sha256:<required:64-hex-digest>",
+    "queue": "training-lq",
+    "pool": "gpu-b300",
+    "gpu_type": "NVIDIA B300",
+    "workers": 1,
+    "gpus_per_worker": 8,
+    "mode": "debug_minimal",
+    "max_context_length": 30720,
+    "max_response_length": 24576,
+    "max_train_tokens_per_gpu": 9216,
+    "requested_rounds": 2
+  },
+  "execution": {
+    "fleet_run_id": "<required:run-id-or-not-applicable>",
+    "cluster_job_name": "<required:job-name>",
+    "submitted_at_utc": "<required:RFC3339-timestamp>",
+    "completed_at_utc": "<required:RFC3339-timestamp>",
+    "terminal_status": "<required:succeeded-or-failed>",
+    "failure_summary": "<required:not-applicable-or-concise-failure>",
+    "optimizer_steps_completed": "<required:non-negative-integer>",
+    "driver_log_path": "<required:immutable-or-retained-path>",
+    "metrics_run_url": "<required:url-or-not-applicable>",
+    "checkpoints": [
+      {
+        "optimizer_step": 2,
+        "path": "<required:retained-checkpoint-path>",
+        "manifest_sha256": "sha256:<required:64-hex-digest>"
+      }
+    ]
+  },
+  "attestation": {
+    "all_placeholders_resolved": false,
+    "selection_matches_taskdump": false,
+    "taskdump_matches_taskset": false,
+    "image_digest_verified": false,
+    "model_revision_verified": false,
+    "two_rounds_and_checkpoint_verified": false,
+    "notes": "A failed run is still frozen. Do not set an evidence attestation true without retaining the evidence named in OPERATOR_HANDOFF.md."
+  }
+}

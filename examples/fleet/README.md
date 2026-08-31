@@ -96,6 +96,12 @@ For reproducible experiments, set `TASKSET_REF` to an immutable Registry
 reference such as `registry-alpha.fleetai.me/<namespace>/<repository>@sha256:<digest>`.
 Mutable `:tag` references remain supported for compatibility.
 
+For the Qwen3.6 cyber smoke, follow the
+[`OPERATOR_HANDOFF.md`](OPERATOR_HANDOFF.md) gate-by-gate procedure and fill
+[`experiment-ledger.template.json`](launch/experiment-ledger.template.json).
+The ledger is the durable link between the frozen Fleet task versions, exact
+model revision, trainer image digest, queued job, and resulting checkpoints.
+
 ## 4. One-time setup
 
 - kubeconfig:
