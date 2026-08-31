@@ -11,7 +11,10 @@ whatever `command` invokes.
     ./submit_run.py my-run.json --dry-run
 
 Payload:
-    name             run and RayJob name (DNS-safe label)
+    name             run and RayJob name (DNS-safe label, starting with owner)
+    owner            short human owner name used by cluster inventory (for
+                     example, chris)
+    submitted_by     human owner's Fleet email used for audit metadata
     image            ghcr.io/fleet-ai/miles-fleet/trainer:<sha>
     command          what to run; no apostrophes (single-quoted entrypoint)
     workers          number of GPU pods; with gpus_per_worker=8 one pod fills
@@ -63,11 +66,17 @@ def _fail(msg: str) -> None:
 
 def _load_payload(path: str) -> dict:
     payload = json.loads(Path(path).read_text())
-    for field in ("name", "image", "command", "workers", "gpus_per_worker"):
+    for field in ("name", "owner", "submitted_by", "image", "command", "workers", "gpus_per_worker"):
         if field not in payload:
             _fail(f"payload is missing '{field}'")
     if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,50}[a-z0-9])?", payload["name"]):
         _fail("name must be a short DNS-safe label (lowercase alphanumerics and dashes)")
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?", payload["owner"]):
+        _fail("owner must be a short DNS-safe human name")
+    if not payload["name"].startswith(f"{payload['owner']}-"):
+        _fail("name must start with '<owner>-' so cluster inventory attributes the GPUs to that person")
+    if not re.fullmatch(r"[A-Za-z0-9._%+-]+@fleet\.so", payload["submitted_by"]):
+        _fail("submitted_by must be the human owner's @fleet.so email")
     if not (isinstance(payload["workers"], int) and payload["workers"] >= 1):
         _fail("workers must be an integer >= 1")
     if not (isinstance(payload["gpus_per_worker"], int) and 1 <= payload["gpus_per_worker"] <= 8):
@@ -114,6 +123,8 @@ def _render(payload: dict) -> str:
     pool_vals = {k: v for k, v in _POOLS[payload.get("pool", "gpu-b300")].items() if k != "KUBE_CONTEXT"}
     values = {
         "JOB_NAME": payload["name"],
+        "OWNER": payload["owner"],
+        "SUBMITTED_BY": json.dumps(payload["submitted_by"]),
         "SECRET_NAME": f"{payload['name']}-secrets",
         "IMAGE": payload["image"],
         "COMMAND": payload["command"],

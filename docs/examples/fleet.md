@@ -67,12 +67,15 @@ The launcher currently contains two dense-Qwen recipes:
 
 ## 3. The run JSON
 
-A run is five things (a name, an image, a command, how many GPUs, and env
-variables) plus secrets. Working examples: [`launch/examples/`](https://github.com/radixark/miles/tree/main/examples/fleet/launch/examples).
+A run names its human owner and supplies an image, a command, the GPU shape,
+environment variables, and secrets. Working examples:
+[`launch/examples/`](https://github.com/radixark/miles/tree/main/examples/fleet/launch/examples).
 
 ```json
 {
-  "name": "miles-vl-qwen38-2node-01",
+  "name": "chris-miles-vl-qwen38-2node-01",
+  "owner": "chris",
+  "submitted_by": "christopher@fleet.so",
   "image": "ghcr.io/fleet-ai/miles-fleet/trainer:5f74853a",
   "command": "bash examples/fleet/launch/run.sh --model-name qwen3.8-27b --mode normal --num-nodes 2 --num-gpus-per-node 8 --max-turns 32 --max-concurrent-envs 16",
   "workers": 2,
@@ -87,7 +90,9 @@ variables) plus secrets. Working examples: [`launch/examples/`](https://github.c
 
 | Field | What it is |
 |---|---|
-| `name` | names the job, the folder on `/mnt/sfs`, and the WandB group. Lowercase letters, digits, dashes. |
+| `name` | names the job, the folder on `/mnt/sfs`, and the WandB group. It must start with `<owner>-` so cluster inventory attributes occupied GPUs to the right person. |
+| `owner` | the submitter's short lowercase human name, such as `chris`; copied to the RayJob and every pod as an `owner` label. |
+| `submitted_by` | the human owner's `@fleet.so` email; copied to the RayJob's audit annotation. |
 | `image` | which trainer image to run (section 6) |
 | `command` | what to run on the head. `run.sh` does setup, then starts training with these arguments. One rule: no apostrophes. |
 | `workers` | how many 8-GPU machines |

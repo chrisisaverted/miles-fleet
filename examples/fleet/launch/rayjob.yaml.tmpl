@@ -21,9 +21,10 @@ metadata:
   namespace: fleet-train-jobs
   labels:
     app: miles-fleet
+    owner: ${OWNER}
     kueue.x-k8s.io/queue-name: training-lq
   annotations:
-    fleet.ai/submitted-by: deniz@fleet.so
+    fleet.ai/submitted-by: ${SUBMITTED_BY}
 spec:
   suspend: true                      # Kueue unsuspends on gang admission
   shutdownAfterJobFinishes: true
@@ -42,6 +43,8 @@ spec:
     exec ${COMMAND}
     '
   submitterPodTemplate:
+    metadata:
+      labels: {owner: ${OWNER}}
     spec:
       restartPolicy: Never
       nodeSelector: {kubernetes.io/os: linux, workload: ${CPU_WORKLOAD}}
@@ -65,7 +68,7 @@ spec:
         dashboard-host: "0.0.0.0"
       template:
         metadata:
-          labels: {app: miles-fleet, run: "${JOB_NAME}"}
+          labels: {app: miles-fleet, owner: ${OWNER}, run: "${JOB_NAME}"}
           annotations:
             kueue.x-k8s.io/podset-required-topology: topology.nebius.com/tier-2
         spec:
@@ -150,7 +153,7 @@ spec:
         rayStartParams: {}
         template:
           metadata:
-            labels: {app: miles-fleet, run: "${JOB_NAME}"}
+            labels: {app: miles-fleet, owner: ${OWNER}, run: "${JOB_NAME}"}
             annotations:
               kueue.x-k8s.io/podset-required-topology: topology.nebius.com/tier-2
           spec:

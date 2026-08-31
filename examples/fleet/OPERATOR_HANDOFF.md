@@ -203,6 +203,8 @@ That mode requests one rollout/optimizer step and a step-one checkpoint:
 ```json
 {
   "name": "chris-cyber-qwen36-27b-capability-gate-01",
+  "owner": "chris",
+  "submitted_by": "christopher@fleet.so",
   "image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:<resolved-digest>",
   "command": "bash examples/fleet/launch/run.sh --model-name qwen3.6-27b --mode debug_one_step --num-nodes 1 --num-gpus-per-node 8 --rollout-batch-size 1 --n-samples-per-prompt 2 --max-turns 2 --max-concurrent-envs 1 --max-concurrent-prepares 1",
   "workers": 1,
@@ -249,6 +251,8 @@ export CAPABILITY_PAYLOAD='<redacted:absolute-path-to-filled-run.json>'
 
 jq -e '
   .name == "chris-cyber-qwen36-27b-capability-gate-01" and
+  .owner == "chris" and
+  .submitted_by == "christopher@fleet.so" and
   (.image | test("^ghcr.io/fleet-ai/miles-fleet/trainer@sha256:[0-9a-f]{64}$")) and
   .workers == 1 and .gpus_per_worker == 8 and .pool == "gpu-b300" and
   .env.TASK_LIMIT == "1" and
@@ -356,6 +360,8 @@ form in the run JSON:
 ```json
 {
   "name": "chris-cyber-qwen36-27b-smoke-01",
+  "owner": "chris",
+  "submitted_by": "christopher@fleet.so",
   "image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:<resolved-digest>",
   "command": "bash examples/fleet/launch/run.sh --model-name qwen3.6-27b --mode debug_minimal --num-nodes 1 --num-gpus-per-node 8 --max-turns 2 --max-concurrent-envs 4",
   "workers": 1,

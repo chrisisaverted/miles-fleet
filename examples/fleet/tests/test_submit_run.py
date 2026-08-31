@@ -10,6 +10,8 @@ from examples.fleet.launch.submit_run import _load_payload, _render
 def _payload(*, workers: int) -> dict:
     return {
         "name": "chris-cyber-qwen36-capability-gate",
+        "owner": "chris",
+        "submitted_by": "christopher@fleet.so",
         "image": "example.invalid/trainer@sha256:" + "a" * 64,
         "command": "echo ok",
         "workers": workers,
@@ -32,6 +34,10 @@ def test_single_node_render_keeps_requested_secrets() -> None:
         "wandb-api",
         "fleet-api",
     ]
+    assert document["metadata"]["labels"]["owner"] == "chris"
+    assert document["metadata"]["annotations"]["fleet.ai/submitted-by"] == "christopher@fleet.so"
+    assert document["spec"]["submitterPodTemplate"]["metadata"]["labels"]["owner"] == "chris"
+    assert cluster["headGroupSpec"]["template"]["metadata"]["labels"]["owner"] == "chris"
 
 
 def test_multi_node_render_keeps_requested_secrets_on_every_gpu_pod() -> None:
@@ -48,6 +54,29 @@ def test_multi_node_render_keeps_requested_secrets_on_every_gpu_pod() -> None:
         "wandb-api",
         "fleet-api",
     ]
+    assert cluster["workerGroupSpecs"][0]["template"]["metadata"]["labels"]["owner"] == "chris"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("owner", None),
+        ("submitted_by", None),
+        ("owner", "miles"),
+        ("submitted_by", "service-account@example.com"),
+    ],
+)
+def test_payload_rejects_missing_or_misattributed_human_owner(tmp_path: Path, field: str, value: str | None) -> None:
+    payload = _payload(workers=1)
+    if value is None:
+        del payload[field]
+    else:
+        payload[field] = value
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(SystemExit):
+        _load_payload(str(path))
 
 
 def test_capability_packet_renders_exact_queue_resources() -> None:

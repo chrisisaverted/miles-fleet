@@ -1,5 +1,7 @@
 {
-  "name": "miles-vl-qwen38-2node-01",
+  "name": "deniz-miles-vl-qwen38-2node-01",
+  "owner": "deniz",
+  "submitted_by": "deniz@fleet.so",
   "image": "ghcr.io/fleet-ai/miles-fleet/trainer:5f74853a",
   "command": "bash examples/fleet/launch/run.sh --model-name qwen3.8-27b --mode normal --num-nodes 2 --num-gpus-per-node 8 --max-turns 32 --max-concurrent-envs 16",
   "workers": 2,
