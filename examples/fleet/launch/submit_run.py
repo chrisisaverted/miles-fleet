@@ -33,6 +33,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 HERE = Path(__file__).resolve().parent
 
 # A pool names a set of identical GPU machines and the cluster that hosts
@@ -40,8 +42,12 @@ HERE = Path(__file__).resolve().parent
 # 24 x 8 B300, 268GB per GPU, 2.7TB host RAM, InfiniBand between machines).
 _POOLS = {
     "gpu-b300": dict(
-        KUBE_CONTEXT="nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6", CPU_WORKLOAD="fleetai-training-ng-cpu",
-        NODE_WORKLOAD="fleetai-training-ng-gpu", INSTANCE_TYPE="gpu-b300-sxm", MAIN_MEM="1500Gi", MAIN_MEM_LIM="2400Gi",
+        KUBE_CONTEXT="nebius-mk8s-fleetai-training-e04zw4ye1k7wczqdw6",
+        CPU_WORKLOAD="fleetai-training-ng-cpu",
+        NODE_WORKLOAD="fleetai-training-ng-gpu",
+        INSTANCE_TYPE="gpu-b300-sxm",
+        MAIN_MEM="1500Gi",
+        MAIN_MEM_LIM="2400Gi",
     ),
 }
 
@@ -100,22 +106,23 @@ def _render(payload: dict) -> str:
     unresolved = sorted(set(re.findall(r"\$\{(\w+)\}", rendered)))
     if unresolved:
         _fail(f"template variables left unresolved: {unresolved}")
+    if payload.get("secrets") or payload["workers"] == 1:
+        doc = yaml.safe_load(rendered)
+        cluster = doc["spec"]["rayClusterSpec"]
+        for secret in payload.get("secrets", []):
+            if secret == "wandb-api":
+                continue
+            cluster["headGroupSpec"]["template"]["spec"]["containers"][0]["envFrom"].append(
+                {"secretRef": {"name": secret}}
+            )
+            for worker in cluster["workerGroupSpecs"]:
+                worker["template"]["spec"]["containers"][0]["envFrom"].append({"secretRef": {"name": secret}})
     if payload["workers"] == 1:
         # Kueue never evaluates a workload containing a zero-count podset, so
         # a single-node run must omit the worker group entirely.
-        import yaml
-
-        doc = yaml.safe_load(rendered)
-        doc["spec"]["rayClusterSpec"]["workerGroupSpecs"] = []
+        cluster["workerGroupSpecs"] = []
+    if payload.get("secrets") or payload["workers"] == 1:
         rendered = yaml.safe_dump(doc, default_flow_style=False, sort_keys=False, width=10000)
-    if payload.get("secrets"):
-        extra = "".join(
-            f"\n                - secretRef: {{name: {s}}}" for s in payload["secrets"] if s != "wandb-api"
-        )
-        rendered = rendered.replace(
-            "                - secretRef: {name: wandb-api}",
-            "                - secretRef: {name: wandb-api}" + extra,
-        )
     return rendered
 
 
@@ -129,7 +136,9 @@ def _create_run_secret(name: str, kubectl: list) -> None:
             literals.append(f"--from-literal={key}={os.environ[key]}")
     manifest = subprocess.run(
         kubectl + ["create", "secret", "generic", f"{name}-secrets", *literals, "--dry-run=client", "-o", "yaml"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
     subprocess.run(kubectl + ["apply", "-f", "-"], input=manifest, check=True, text=True)
 
