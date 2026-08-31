@@ -1,7 +1,7 @@
 {
   "name": "chris-cyber-qwen36-27b-capability-gate-01",
   "image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:<required:64-hex-digest>",
-  "command": "bash examples/fleet/launch/run.sh --model-name qwen3.6-27b --mode debug_one_step --num-nodes 1 --num-gpus-per-node 8 --max-turns 2 --max-concurrent-envs 1 --max-concurrent-prepares 1",
+  "command": "bash examples/fleet/launch/run.sh --model-name qwen3.6-27b --mode debug_one_step --num-nodes 1 --num-gpus-per-node 8 --rollout-batch-size 1 --n-samples-per-prompt 2 --max-turns 2 --max-concurrent-envs 1 --max-concurrent-prepares 1",
   "workers": 1,
   "gpus_per_worker": 8,
   "pool": "gpu-b300",

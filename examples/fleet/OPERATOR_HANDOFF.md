@@ -204,7 +204,7 @@ That mode requests one rollout/optimizer step and a step-one checkpoint:
 {
   "name": "chris-cyber-qwen36-27b-capability-gate-01",
   "image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:<resolved-digest>",
-  "command": "bash examples/fleet/launch/run.sh --model-name qwen3.6-27b --mode debug_one_step --num-nodes 1 --num-gpus-per-node 8 --max-turns 2 --max-concurrent-envs 1",
+  "command": "bash examples/fleet/launch/run.sh --model-name qwen3.6-27b --mode debug_one_step --num-nodes 1 --num-gpus-per-node 8 --rollout-batch-size 1 --n-samples-per-prompt 2 --max-turns 2 --max-concurrent-envs 1 --max-concurrent-prepares 1",
   "workers": 1,
   "gpus_per_worker": 8,
   "pool": "gpu-b300",
@@ -258,6 +258,8 @@ jq -e '
   .env.FLEET_AUTHORITATIVE_SELECTION_SHA256 == "56602ed11012380d6cf2d1f00cefe6c13ac714ccfb2b71cf826af2a2043379db" and
   (.command | contains("--model-name qwen3.6-27b")) and
   (.command | contains("--mode debug_one_step")) and
+  (.command | contains("--rollout-batch-size 1")) and
+  (.command | contains("--n-samples-per-prompt 2")) and
   ([paths(scalars) as $p | getpath($p) | strings | select(contains("<required:"))] | length) == 0
 ' "$CAPABILITY_PAYLOAD" >/dev/null
 
@@ -272,6 +274,10 @@ priority class `fleet-train-high`, 48 CPU and 1500Gi memory requested (64 CPU
 and 2400Gi limited), the immutable trainer digest, the exact selection path and
 digest, and both the generated run credential secret and `fleet-api` secret.
 This is a render check, not permission to submit.
+
+The canary uses one prompt with two samples. Two samples preserve a nontrivial
+within-prompt GRPO comparison while avoiding the recipe defaults of eight
+prompts times eight samples (64 paid cyber episodes) for an integration gate.
 
 The submit gate remains closed until every item is independently evidenced:
 
