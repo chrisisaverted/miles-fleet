@@ -1,0 +1,19 @@
+{
+  "name": "chris-cyber-qwen36-27b-capability-gate-03",
+  "image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:6cd059e8327018bc7e783f3bff939bd9ebcf243d81b66d6422951e89c9223b37",
+  "command": "bash examples/fleet/launch/run.sh --model-name qwen3.6-27b --mode debug_one_step --num-nodes 1 --num-gpus-per-node 8 --rollout-batch-size 1 --n-samples-per-prompt 8 --max-turns 2 --max-concurrent-envs 1 --max-concurrent-prepares 1",
+  "workers": 1,
+  "gpus_per_worker": 8,
+  "pool": "gpu-b300",
+  "env": {
+    "FLEET_AUTHORITATIVE_SELECTION": "examples/fleet/launch/capability-gate.authoritative-selection.v1.json",
+    "FLEET_AUTHORITATIVE_SELECTION_SHA256": "56602ed11012380d6cf2d1f00cefe6c13ac714ccfb2b71cf826af2a2043379db",
+    "TASK_LIMIT": "1",
+    "FLEET_BACKEND": "fleet_authoritative_cyber_v1",
+    "FLEET_REWARD_OBJECTIVE": "raw_capability_v1"
+  },
+  "secrets": [
+    "wandb-api",
+    "fleet-api"
+  ]
+}
