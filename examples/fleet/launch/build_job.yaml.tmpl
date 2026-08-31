@@ -7,7 +7,9 @@ kind: Job
 metadata:
   name: ${BUILD_JOB}
   namespace: fleet-train-jobs
-  labels: {app: img-build}
+  labels:
+    app: img-build
+    kueue.x-k8s.io/queue-name: default
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 14400

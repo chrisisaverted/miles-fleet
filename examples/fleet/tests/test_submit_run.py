@@ -88,6 +88,7 @@ def test_image_builder_fetches_and_checks_exact_commit_without_mutating_latest()
     assert " delete job " not in script
     assert 'git fetch -q --depth 1 origin "${REF}"' in template
     assert 'test "$FETCHED_COMMIT" = "$EXPECTED_COMMIT"' in template
+    assert "kueue.x-k8s.io/queue-name: default" in template
     assert 'docker push "ghcr.io/fleet-ai/miles-fleet/trainer:${SHA}"' in template
     assert "docker push ghcr.io/fleet-ai/miles-fleet/trainer:latest" not in template
     assert 'timeout 300 docker pull "ghcr.io/fleet-ai/miles-fleet/trainer:${CACHE_TAG}"' in template
