@@ -38,6 +38,13 @@
     "train_attention_backend": "sdpa",
     "rollout_attention_backend": "triton"
   },
+  "verification": {
+    "contract": "cyber_verification_result_v3",
+    "authority": "<required:trusted-context-builder-and-pinned-verifier-service>",
+    "objective_mapping": "safe_success_v1",
+    "raw_capability_reward_retained": true,
+    "patch_bearing_supported": false
+  },
   "launch": {
     "payload_sha256": "sha256:<required:64-hex-digest>",
     "queue": "training-lq",
@@ -75,6 +82,8 @@
     "taskdump_matches_taskset": false,
     "image_digest_verified": false,
     "model_revision_verified": false,
+    "checked_v3_context_verified": false,
+    "behavior_receipt_verified": false,
     "two_rounds_and_checkpoint_verified": false,
     "notes": "A failed run is still frozen. Do not set an evidence attestation true without retaining the evidence named in OPERATOR_HANDOFF.md."
   }

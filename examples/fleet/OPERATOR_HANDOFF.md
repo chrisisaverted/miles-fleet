@@ -1,9 +1,10 @@
 # Qwen3.6 cyber smoke: reproducible operator handoff
 
-This procedure prepares one queue-safe, two-round Qwen3.6-27B smoke from the
-frozen 129-task Fleet selection. It separates read-only preparation from the
-two state-changing gates: publishing the TaskSet and submitting the training
-job. Do not cross either gate without explicit approval.
+This procedure records the reproducibility gates for a future queue-safe,
+two-round Qwen3.6-27B smoke from the frozen 129-task Fleet selection. It does
+not currently authorize publishing the TaskSet or submitting the training job.
+Do not cross either state-changing gate without explicit approval and without
+the verifier-authority gate in section 2 being implemented and tested.
 
 Never paste credentials into a run JSON, ledger, terminal transcript, pull
 request, or task artifact. Use the normal authenticated clients and environment
@@ -14,8 +15,9 @@ redacted local path.
 
 Work from reviewed, clean commits of `fleet-ai/platform` and
 `fleet-ai/miles-fleet`. Record their full 40-character commits. The Platform
-commit must contain `fleet.taskdump.v7` frozen-selection support; the miles
-commit must contain the `qwen3.6-27b` recipe.
+commit must contain `fleet.taskdump.v7` frozen-selection support **and** the
+exact report-only cysec1 aggregated-topology support. Version-row provenance
+alone is insufficient. The miles commit must contain the `qwen3.6-27b` recipe.
 
 Create the bounded selector from the already-frozen run configuration:
 
@@ -55,6 +57,33 @@ Record `sha256sum "$SELECTION"` in the experiment ledger. Stop if the count,
 uniqueness checks, or any subsequent pin check fails.
 
 ## 2. Export and audit the exact TaskDump (read-only)
+
+The topology change removes one known export blocker, but the dry run must
+still prove each selected verifier is importable. Export success itself is not
+proof that LocalRuntime can grade these tasks. Current Miles grading calls the
+compatibility verifier without a server-checked `cyber_verification_context`; authoritative
+v3 verification therefore fails closed. Platform also has no runtime-owned
+attempt-provenance channel for the protected `CYBER_EVIDENCE_*` and behavior
+policy variables. Do not put those values into authored task environment
+variables: that would make agent-visible immutable content impersonate a
+platform attestation.
+
+Before any TaskSet publication or job submission, a trusted integration must:
+
+1. inject attempt-bound evidence and behavior-policy values outside authored
+   Task content;
+2. retain the report-only finalized evidence and protected behavior bundle;
+3. have a service validate both bundles, construct the checked v3 context, and
+   execute the exact `verifier_version_id`; and
+4. return the structured v3 result to Miles. This smoke pins
+   `safe_success_v1`: training reward is `1` exactly when the checked structured
+   result has `diagnostics.safe_success == true`, otherwise `0`; the raw
+   capability reward is retained separately. The mapping is explicit because
+   the top-level v3 reward measures exploit capability and does not penalize
+   unsafe behavior by itself.
+
+Patch-bearing v3 tasks are outside this smoke's scope: they need Theseus's
+hidden post-rollout oracle in a still-live managed session.
 
 Run from the pinned Platform checkout. Supply the read-only task database and
 approved image-grounding access through the operator environment; the command
@@ -206,6 +235,10 @@ jq -e '
   (.data.taskdump_sha256 | test("^sha256:[0-9a-f]{64}$")) and
   (.data.taskset_reference | test("@sha256:[0-9a-f]{64}$")) and
   (.runtime.trainer_image | test("@sha256:[0-9a-f]{64}$")) and
+  .verification.contract == "cyber_verification_result_v3" and
+  .verification.objective_mapping == "safe_success_v1" and
+  .verification.raw_capability_reward_retained == true and
+  .verification.patch_bearing_supported == false and
   (.launch.payload_sha256 | test("^sha256:[0-9a-f]{64}$")) and
   (.model.revision | test("^[0-9a-f]{40}$")) and
   (.source.miles_commit | test("^[0-9a-f]{40}$")) and
@@ -216,7 +249,7 @@ jq -e '
   ([.execution.checkpoints[].manifest_sha256 | test("^sha256:[0-9a-f]{64}$")] | all) and
   ([paths(scalars) as $p | getpath($p) | strings | select(contains("<required:"))] | length) == 0 and
   .attestation.all_placeholders_resolved == true and
-  ([.attestation[] | booleans] | length) == 6 and
+  ([.attestation[] | booleans] | length) == 8 and
   (
     .execution.terminal_status == "failed" or
     (
@@ -226,6 +259,8 @@ jq -e '
       .attestation.taskdump_matches_taskset and
       .attestation.image_digest_verified and
       .attestation.model_revision_verified and
+      .attestation.checked_v3_context_verified and
+      .attestation.behavior_receipt_verified and
       .attestation.two_rounds_and_checkpoint_verified
     )
   )
