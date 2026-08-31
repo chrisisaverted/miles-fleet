@@ -148,6 +148,27 @@ def _hf_checkpoint_path(args: ScriptArgs) -> Path:
     return path
 
 
+def _validate_fsdp_batch_shape(args: ScriptArgs) -> None:
+    """Reject rollout batches that cannot give every FSDP rank one sample.
+
+    The Fleet recipe runs one FSDP data-parallel rank per requested GPU.
+    Miles computes the local global-batch shard as ``global_batch_size //
+    dp_size``.  A smaller batch therefore reaches rollout successfully but
+    divides by zero at optimizer entry; a non-divisible batch also produces
+    unequal raw shards.  Catch both before model allocation.
+    """
+    dp_size = args.num_nodes * args.num_gpus_per_node
+    samples_per_rollout = args.rollout_batch_size * args.n_samples_per_prompt
+    if dp_size < 1:
+        raise ValueError("FSDP data-parallel size must be positive")
+    if samples_per_rollout < dp_size or samples_per_rollout % dp_size:
+        raise ValueError(
+            "Fleet FSDP rollout samples must be at least and divisible by "
+            f"dp_size={dp_size}; got rollout_batch_size={args.rollout_batch_size} "
+            f"* n_samples_per_prompt={args.n_samples_per_prompt} = {samples_per_rollout}"
+        )
+
+
 def prepare(args: ScriptArgs):
     """Idempotent: skips work whose output already exists, so concurrent jobs
     serialized by the launch manifest's flock share one downloaded model.
@@ -161,6 +182,7 @@ def prepare(args: ScriptArgs):
 
 
 def execute(args: ScriptArgs):
+    _validate_fsdp_batch_shape(args)
     recipe = args.recipe
     # Swap in a fixed chat template: the stock Qwen templates raise "No user
     # query found in messages" on the TITO suffix render ([dummy system, dummy

@@ -96,7 +96,7 @@ def test_capability_run_packet_is_one_step_queue_safe_and_immutable() -> None:
     assert "--model-name qwen3.6-27b" in payload["command"]
     assert "--mode debug_one_step" in payload["command"]
     assert "--rollout-batch-size 1" in payload["command"]
-    assert "--n-samples-per-prompt 2" in payload["command"]
+    assert "--n-samples-per-prompt 8" in payload["command"]
     assert "--max-concurrent-envs 1" in payload["command"]
     assert "--max-concurrent-prepares 1" in payload["command"]
     assert payload["secrets"] == ["wandb-api", "fleet-api"]

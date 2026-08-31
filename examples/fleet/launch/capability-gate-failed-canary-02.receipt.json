@@ -1,0 +1,58 @@
+{
+  "schema": "fleet.miles.capability-gate-failed-canary.v1",
+  "recorded_at_utc": "2026-08-31T07:52:00Z",
+  "status": "failed_after_authoritative_rollout_before_optimizer",
+  "run": {
+    "name": "chris-cyber-qwen36-27b-capability-gate-02",
+    "rayjob_uid": "5cc52a6c-6bfa-4490-adfe-e17f77ae34a4",
+    "ray_cluster": "chris-cyber-qwen36-27b-capability-gate-02-cnm86",
+    "ray_submit_id": "raysubmit_s59FdvP25Bemj4UE",
+    "queue_workload": "rayjob-chris-cyber-qwen36-27b-capability-gate-02-03ab5",
+    "wandb_run_id": "8bsx3b4a"
+  },
+  "source": {
+    "miles_commit": "15c68c81a7aa612dfcd0404ecdf152769c5378d9",
+    "trainer_image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:d59a310fbfa7784daccf19236e460688fd56e3910fa4937334d24f2033a3ae3d",
+    "selection_sha256": "56602ed11012380d6cf2d1f00cefe6c13ac714ccfb2b71cf826af2a2043379db",
+    "model_revision": "6a9e13bd6fc8f0983b9b99948120bc37f49c13e9"
+  },
+  "authoritative_rollout": {
+    "completed_samples": 2,
+    "aborted_samples": 0,
+    "aggregate_raw_capability_reward": 0.0,
+    "response_token_lengths": [157, 163],
+    "rollout_seconds": 79.01265382766724,
+    "instances": [
+      {
+        "instance_id": "vd1trrxh5zdx-n",
+        "created_at": "2026-08-31T07:48:48.520457Z",
+        "terminated_at": "2026-08-31T07:49:25.854993Z",
+        "status": "stopped"
+      },
+      {
+        "instance_id": "itn5kcdadru-n",
+        "created_at": "2026-08-31T07:49:26.754117Z",
+        "terminated_at": "2026-08-31T07:49:58.868232Z",
+        "status": "stopped"
+      }
+    ],
+    "exact_environment": "cysec1-2-current-gen:v0.0.3",
+    "exact_data": "commercial:v0.0.9",
+    "verifier_execution_ids": null,
+    "verifier_id_note": "Both samples passed check_no_aborted, which requires AuthoritativeCyberSession.grade to return. That path fail-closes unless an exact-bound cyber_verification_result_v3 and matching authoritative direct-verifier execution are present. Miles did not persist the per-sample verifier execution IDs before the subsequent optimizer crash, so no IDs are inferred here."
+  },
+  "training": {
+    "requested_optimizer_steps": 1,
+    "optimizer_steps_completed": 0,
+    "durable_checkpoint_present": false,
+    "failure_type": "ZeroDivisionError",
+    "failure_expression": "num_steps_per_rollout = num_local_samples // num_local_gbs",
+    "failure_cause": "global_batch_size=2 was smaller than FSDP dp_size=8, so num_local_gbs was zero",
+    "corrective_shape": "one prompt x 8 samples; global_batch_size=8, divisible by dp_size=8"
+  },
+  "cleanup": {
+    "rayjob_terminal_status": "FAILED",
+    "gpu_cluster_shutdown_completed": true,
+    "managed_instances_reaped": true
+  }
+}

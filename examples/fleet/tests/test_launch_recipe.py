@@ -109,6 +109,41 @@ def test_one_step_gate_requests_one_rollout_and_step_one_checkpoint(monkeypatch,
     assert "--rollout-max-response-len 512 " in train_args
 
 
+def test_fleet_fsdp_batch_shape_rejects_fewer_samples_than_ranks() -> None:
+    args = run_fleet.ScriptArgs(
+        num_nodes=1,
+        num_gpus_per_node=8,
+        rollout_batch_size=1,
+        n_samples_per_prompt=2,
+    )
+
+    with pytest.raises(ValueError, match=r"dp_size=8.*= 2"):
+        run_fleet._validate_fsdp_batch_shape(args)
+
+
+def test_fleet_fsdp_batch_shape_rejects_uneven_rank_shards() -> None:
+    args = run_fleet.ScriptArgs(
+        num_nodes=1,
+        num_gpus_per_node=8,
+        rollout_batch_size=1,
+        n_samples_per_prompt=9,
+    )
+
+    with pytest.raises(ValueError, match=r"dp_size=8.*= 9"):
+        run_fleet._validate_fsdp_batch_shape(args)
+
+
+def test_fleet_fsdp_batch_shape_accepts_one_sample_per_rank() -> None:
+    args = run_fleet.ScriptArgs(
+        num_nodes=1,
+        num_gpus_per_node=8,
+        rollout_batch_size=1,
+        n_samples_per_prompt=8,
+    )
+
+    run_fleet._validate_fsdp_batch_shape(args)
+
+
 def test_qwen38_checkpoint_path_and_download_are_unchanged(monkeypatch, tmp_path: Path) -> None:
     commands: list[str] = []
     monkeypatch.setattr(run_fleet.U, "exec_command_cpu", commands.append)
