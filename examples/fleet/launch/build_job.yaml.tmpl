@@ -45,7 +45,9 @@ spec:
           env:
             - {name: DOCKER_HOST, value: "tcp://127.0.0.1:2375"}
             - {name: SHA, value: "${SHA}"}
+            - {name: SOURCE_REPOSITORY, value: "${SOURCE_REPOSITORY}"}
             - {name: REF, value: "${REF}"}
+            - {name: EXPECTED_COMMIT, value: "${EXPECTED_COMMIT}"}
             - {name: CACHE_TAG, value: "${CACHE_TAG}"}
           resources:
             requests: {cpu: "1", memory: 2Gi}
@@ -56,8 +58,16 @@ spec:
               set -eu
               apk add --no-cache git >/dev/null
               for i in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done
-              git clone --depth 1 -b "${REF}" "https://x-access-token:${GH_TOKEN}@github.com/fleet-ai/miles-fleet" /w
+              git init -q /w
               cd /w
+              git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${SOURCE_REPOSITORY}.git"
+              git fetch -q --depth 1 origin "${REF}"
+              FETCHED_COMMIT=$(git rev-parse FETCH_HEAD)
+              test "$FETCHED_COMMIT" = "$EXPECTED_COMMIT" || {
+                echo "fetched commit $FETCHED_COMMIT does not match expected $EXPECTED_COMMIT" >&2
+                exit 1
+              }
+              git checkout -q --detach FETCH_HEAD
               echo "${GH_TOKEN}" | docker login ghcr.io -u x --password-stdin
               docker pull "ghcr.io/fleet-ai/miles-fleet/trainer:${CACHE_TAG}" >/dev/null 2>&1 || true
               export GH_TOKEN
@@ -65,7 +75,6 @@ spec:
                 --cache-from "ghcr.io/fleet-ai/miles-fleet/trainer:${CACHE_TAG}" \
                 --secret id=gh_token,env=GH_TOKEN \
                 -t "ghcr.io/fleet-ai/miles-fleet/trainer:${SHA}" \
-                -t ghcr.io/fleet-ai/miles-fleet/trainer:latest .
+                .
               docker push "ghcr.io/fleet-ai/miles-fleet/trainer:${SHA}"
-              docker push ghcr.io/fleet-ai/miles-fleet/trainer:latest
-              echo "IMAGE PUSHED: ${SHA}"
+              echo "IMAGE PUSHED: ${SHA} FROM ${FETCHED_COMMIT}"

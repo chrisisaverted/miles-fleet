@@ -73,3 +73,17 @@ def test_capability_packet_renders_exact_queue_resources() -> None:
         "wandb-api",
         "fleet-api",
     ]
+
+
+def test_image_builder_fetches_and_checks_exact_commit_without_mutating_latest() -> None:
+    launch_dir = Path(__file__).resolve().parents[1] / "launch"
+    script = (launch_dir / "build_image.sh").read_text(encoding="utf-8")
+    template = (launch_dir / "build_job.yaml.tmpl").read_text(encoding="utf-8")
+
+    assert 'EXPECTED_COMMIT="${3:-$(git -C "$REPO_DIR" rev-parse "$REF")}"' in script
+    assert "refusing to replace existing build job" in script
+    assert " delete job " not in script
+    assert 'git fetch -q --depth 1 origin "${REF}"' in template
+    assert 'test "$FETCHED_COMMIT" = "$EXPECTED_COMMIT"' in template
+    assert 'docker push "ghcr.io/fleet-ai/miles-fleet/trainer:${SHA}"' in template
+    assert "docker push ghcr.io/fleet-ai/miles-fleet/trainer:latest" not in template

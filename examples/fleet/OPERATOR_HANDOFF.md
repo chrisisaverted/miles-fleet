@@ -320,11 +320,21 @@ Never record or train from the mutable tag.
 
 ## 4. Build and inspect the trainer image, then stop at the submit gate
 
-Build the exact miles commit through the established cluster image builder.
-Building is itself a state change and the current shared builder also advances
-its mutable `latest` image tag, so obtain explicit approval before invoking it.
-Resolve the resulting tag to its registry digest and put only the digest form
-in the run JSON:
+Build the exact Miles commit through the established cluster image builder.
+The builder requires an expected 40-character commit, verifies the fetched ref
+against it, refuses to replace an existing build job, and pushes only the
+commit-derived tag; it does not advance the shared mutable `latest` tag. For a
+fork PR, name that fork and branch explicitly:
+
+```bash
+./examples/fleet/launch/build_image.sh \
+  chrisisaverted/miles-fleet \
+  codex/qwen36-revision-pinned-recipe \
+  a7b4ab99d2f646da71ebfa52e7745192812ef385
+```
+
+Resolve the resulting commit tag to its registry digest and put only the digest
+form in the run JSON:
 
 ```json
 {
