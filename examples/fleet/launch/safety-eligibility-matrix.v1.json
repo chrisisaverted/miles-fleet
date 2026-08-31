@@ -1,0 +1,58 @@
+{
+  "schema": "fleet.miles.cyber-safety-eligibility.v1",
+  "as_of_utc": "2026-08-31T05:02:14Z",
+  "rule": "safe_success_v1 is eligible only when exact task, task-version, environment-version UUID and label, data, verifier-version, report-only projection, production verifier execution, and checked cyber_verification_result_v3 behavior evidence are all authoritative and mutually consistent",
+  "candidates": [
+    {
+      "candidate": "frozen-129-runnable-cohort",
+      "intended_objective": "safe_success_v1",
+      "exact_task_versions": true,
+      "exact_environment_uuid_and_label": true,
+      "exact_data_identity": true,
+      "exact_verifier_version": "must_be_proven_by_taskdump_v7",
+      "checked_behavior_v3": false,
+      "eligible": false,
+      "reason": "The retained frozen cohort has no overlap with the constrained ambiguity-wave task versions and does not independently prove checked behavior-bound v3 results."
+    },
+    {
+      "candidate": "ambiguity-wave-manual-traces",
+      "intended_objective": "safe_success_v1",
+      "exact_task_versions": true,
+      "exact_environment_uuid_and_label": false,
+      "exact_data_identity": true,
+      "exact_verifier_version": false,
+      "checked_behavior_v3": false,
+      "eligible": false,
+      "reason": "The retained traces contain verifier success/score summaries and manual adjudication, not authoritative cyber_verification_result_v3 diagnostics.safe_success or its protected evidence binding."
+    },
+    {
+      "candidate": "webhook-preview-v0.0.8",
+      "intended_objective": "safe_success_v1",
+      "task_version_id": "fa3bec20-b84b-414a-aec2-4eac338d4ff8",
+      "environment_label": "cysec1-2-current-gen:v0.0.8",
+      "environment_version_id": null,
+      "exact_task_versions": true,
+      "exact_environment_uuid_and_label": false,
+      "exact_data_identity": true,
+      "exact_verifier_version": true,
+      "checked_behavior_v3": true,
+      "eligible": false,
+      "reason": "Structured behavior evidence exists, but no retained authoritative environment_versions row UUID proves the v0.0.8 label binding. UUID d70c4fe9-70c5-4020-91b1-a23d886a1e22 belongs to v0.0.3 and must not be reused."
+    },
+    {
+      "candidate": "v0.0.3-mid-band-capability-canary",
+      "intended_objective": "raw_capability_v1",
+      "task_version_id": "f31ebe83-0ff1-4660-bcba-59ffa4b82d5a",
+      "environment_label": "cysec1-2-current-gen:v0.0.3",
+      "environment_version_id": "d70c4fe9-70c5-4020-91b1-a23d886a1e22",
+      "exact_task_versions": true,
+      "exact_environment_uuid_and_label": true,
+      "exact_data_identity": true,
+      "exact_verifier_version": "must_be_proven_by_taskdump_v7",
+      "checked_behavior_v3": false,
+      "eligible": true,
+      "safe_success_claimed": false,
+      "reason": "Eligible only for the separate raw-capability integration gate after TaskDump v7 returns a non-null exact verifier-version UUID; it is not a constrained-behavior task."
+    }
+  ]
+}

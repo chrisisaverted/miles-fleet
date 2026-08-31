@@ -218,6 +218,79 @@ blocked from submission until the TaskDump/TaskSet pins, trainer digest, and
 deployed Fleet rollout-reward route are all proven. A successful capability
 gate does not satisfy the behavior-bound selection gate below.
 
+The formal current eligibility record is
+`launch/safety-eligibility-matrix.v1.json`. It deliberately keeps four facts
+separate: exact frozen identity, ordinary capability eligibility, checked v3
+behavior evidence, and `safe_success_v1` eligibility. In particular, the
+webhook-preview v0.0.8 candidate remains excluded: its retained structured v3
+result does not supply the missing authoritative `environment_versions` UUID,
+and the known UUID `d70c4fe9-70c5-4020-91b1-a23d886a1e22` is the v0.0.3 row.
+Prompt text, manual trace review, and a verifier success scalar cannot fill an
+authority gap in that matrix.
+
+### No-submit capability readiness packet
+
+The exact payload shape is checked in
+`launch/capability-gate-run.template.json`. Fill only its two digest
+placeholders after the relevant artifacts have been built and approved; do not
+change the model name, mode, task count, backend, or reward objective in the
+same experiment. Before rendering, make a run-specific copy, validate the
+immutable references, and hash it:
+
+```bash
+export CAPABILITY_PAYLOAD='<redacted:absolute-path-to-filled-run.json>'
+
+jq -e '
+  .name == "chris-cyber-qwen36-27b-capability-gate-01" and
+  (.image | test("^ghcr.io/fleet-ai/miles-fleet/trainer@sha256:[0-9a-f]{64}$")) and
+  .workers == 1 and .gpus_per_worker == 8 and .pool == "gpu-b300" and
+  .env.TASK_LIMIT == "1" and
+  .env.FLEET_BACKEND == "fleet_authoritative_cyber_v1" and
+  .env.FLEET_REWARD_OBJECTIVE == "raw_capability_v1" and
+  (.env.TASKSET_REF | test("^registry-alpha\\.fleetai\\.me/fleet/cysec1-2-current-gen-capability-canary@sha256:[0-9a-f]{64}$")) and
+  (.command | contains("--model-name qwen3.6-27b")) and
+  (.command | contains("--mode debug_one_step")) and
+  ([paths(scalars) as $p | getpath($p) | strings | select(contains("<required:"))] | length) == 0
+' "$CAPABILITY_PAYLOAD" >/dev/null
+
+sha256sum "$CAPABILITY_PAYLOAD"
+./examples/fleet/launch/submit_run.py "$CAPABILITY_PAYLOAD" --dry-run \
+  > /tmp/chris-cyber-qwen36-27b-capability-gate-01.rayjob.yaml
+```
+
+Audit the rendered YAML, without applying it. It must request exactly one GPU
+head pod, zero worker groups, eight `gpu-b300-sxm` GPUs, queue `training-lq`,
+priority class `fleet-train-high`, 48 CPU and 1500Gi memory requested (64 CPU
+and 2400Gi limited), the immutable trainer digest, the immutable one-task
+TaskSet digest, and both the generated run credential secret and `fleet-api`
+secret. This is a render check, not permission to submit.
+
+The submit gate remains closed until every item is independently evidenced:
+
+1. Platform PR #758 (or an equivalent reviewed commit) exports the one exact
+   TaskDump v7 row and its non-null verifier-version UUID.
+2. The one-task TaskSet import is clean, its push is approved, and its digest
+   is recorded without a mutable-tag fallback.
+3. This Miles commit is built into a trainer image and that image's registry
+   digest is recorded; the image must load `Qwen/Qwen3.6-27B` revision
+   `6a9e13bd6fc8f0983b9b99948120bc37f49c13e9` without substitution.
+4. Theseus PR #28252, merged as
+   `76a4bd262a63b05d7ac2b33cf1357072aea2dbd4`, is deployed, then a
+   no-training dry run proves exact task/version/instance, image, data,
+   evidence, and production-verifier bindings for this task.
+5. The Fleet team identity is confirmed, cluster capacity remains under the
+   normal queue, and an owner explicitly approves the paid one-step launch.
+
+Rollback is intentionally simple because the packet does not mutate state:
+delete the filled local payload and rendered `/tmp` YAML if any digest or
+binding fails, correct the upstream artifact with a new immutable version, and
+start a new experiment name. After an approved real run, let the RayJob's
+`shutdownAfterJobFinishes: true` and zero-second TTL release compute. Do not
+cancel another user's work or bypass Kueue. Preserve the SFS driver log,
+checkpoint receipt, Fleet verifier execution ID, and completed capability
+ledger before removing only this experiment's own residual RayJob or generated
+run secret under the normal cluster retention procedure.
+
 ## 3. Stage the TaskSet locally, then stop at the publish gate
 
 Use the pinned Platform `flt` binary to import the file locally and inspect the
@@ -278,9 +351,10 @@ sample an arbitrary capability-only task and call it a safety objective. The
 launcher still performs two rollout/training rounds in `debug_minimal` mode.
 Hash this exact JSON and record its SHA-256 in the ledger.
 
-Do not submit until Theseus PR #28252 is merged and its public API deployment
-is confirmed. A locally green unit test proves parsing logic, not route
-deployment or managed-instance evidence finalization.
+Theseus PR #28252 has merged as
+`76a4bd262a63b05d7ac2b33cf1357072aea2dbd4`, but do not submit until its public
+API deployment is independently confirmed. A locally green unit test proves
+parsing logic, not route deployment or managed-instance evidence finalization.
 
 Render and review the queued job without applying it:
 

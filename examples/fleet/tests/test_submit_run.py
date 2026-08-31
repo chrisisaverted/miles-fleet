@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import yaml
 
 from examples.fleet.launch.submit_run import _render
@@ -41,6 +44,32 @@ def test_multi_node_render_keeps_requested_secrets_on_every_gpu_pod() -> None:
     ]
     assert _secret_names(cluster["workerGroupSpecs"][0]["template"]["spec"]) == [
         "chris-cyber-qwen36-capability-gate-secrets",
+        "wandb-api",
+        "fleet-api",
+    ]
+
+
+def test_capability_packet_renders_exact_queue_resources() -> None:
+    payload_path = Path(__file__).resolve().parents[1] / "launch" / "capability-gate-run.template.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    document = yaml.safe_load(_render(payload))
+    cluster = document["spec"]["rayClusterSpec"]
+    head_spec = cluster["headGroupSpec"]["template"]["spec"]
+    container = head_spec["containers"][0]
+
+    assert document["metadata"]["labels"]["kueue.x-k8s.io/queue-name"] == "training-lq"
+    assert document["spec"]["suspend"] is True
+    assert document["spec"]["shutdownAfterJobFinishes"] is True
+    assert document["spec"]["ttlSecondsAfterFinished"] == 0
+    assert cluster["workerGroupSpecs"] == []
+    assert head_spec["nodeSelector"]["node.kubernetes.io/instance-type"] == "gpu-b300-sxm"
+    assert head_spec["priorityClassName"] == "fleet-train-high"
+    assert container["resources"] == {
+        "requests": {"cpu": "48", "memory": "1500Gi", "nvidia.com/gpu": 8},
+        "limits": {"cpu": "64", "memory": "2400Gi", "nvidia.com/gpu": 8},
+    }
+    assert _secret_names(head_spec) == [
+        "chris-cyber-qwen36-27b-capability-gate-01-secrets",
         "wandb-api",
         "fleet-api",
     ]

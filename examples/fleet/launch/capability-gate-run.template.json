@@ -1,0 +1,18 @@
+{
+  "name": "chris-cyber-qwen36-27b-capability-gate-01",
+  "image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:<required:64-hex-digest>",
+  "command": "bash examples/fleet/launch/run.sh --model-name qwen3.6-27b --mode debug_one_step --num-nodes 1 --num-gpus-per-node 8 --max-turns 2 --max-concurrent-envs 1 --max-concurrent-prepares 1",
+  "workers": 1,
+  "gpus_per_worker": 8,
+  "pool": "gpu-b300",
+  "env": {
+    "TASKSET_REF": "registry-alpha.fleetai.me/fleet/cysec1-2-current-gen-capability-canary@sha256:<required:64-hex-digest>",
+    "TASK_LIMIT": "1",
+    "FLEET_BACKEND": "fleet_authoritative_cyber_v1",
+    "FLEET_REWARD_OBJECTIVE": "raw_capability_v1"
+  },
+  "secrets": [
+    "wandb-api",
+    "fleet-api"
+  ]
+}
