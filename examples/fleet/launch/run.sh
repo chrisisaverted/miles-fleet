@@ -47,9 +47,11 @@ for A in $(seq 1 10); do
 done
 test -n "$PULLED" || { echo "flt pull failed after 10 attempts"; exit 1; }
 
-REPO_PATH=$(printf "%s" "$TASKSET_REF" | cut -d: -f1 | sed "s#^registry-alpha.fleetai.me/##")
-NS=$(printf "%s" "$REPO_PATH" | cut -d/ -f1)
-NAME=$(printf "%s" "$REPO_PATH" | cut -d/ -f2)
+# Resolve the repository independently of whether the immutable taskset is
+# selected by @sha256:<digest> or the legacy mutable :tag form.
+REPO_PATH=$(python -m examples.fleet.launch.taskset_ref "$TASKSET_REF")
+NS=${REPO_PATH%%/*}
+NAME=${REPO_PATH#*/}
 ROOT=$(flt list | grep "^taskset " | tr -s " " | cut -d" " -f4)
 ROOT_BARE=${ROOT#sha256:}
 TOKEN=$(python -c "import json,os;print(json.load(open(os.path.expanduser('~/.config/fleet/credentials.json')))['registries']['registry-alpha.fleetai.me']['token'])")
@@ -60,7 +62,8 @@ curl -fsS --retry 10 --retry-delay 30 --retry-all-errors -H "Authorization: Bear
   > ~/.flt/image-locations/sha256/$ROOT_BARE.json
 echo "image-locations plan written for $ROOT"
 
-cd /root/miles
+CODE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+cd "$CODE_DIR"
 python -m examples.fleet.prepare_dataset \
   --taskset-ref taskset --output-dir "$RUN_DIR/data" --max-tasks "$TASK_LIMIT"
 

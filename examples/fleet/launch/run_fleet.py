@@ -8,6 +8,8 @@ chat template) come from the row, the Fleet rollout block is shared.
         --model-name qwen3.8-27b --dataset-dir <dir> --run-id <name>
 
 Rows:
+    qwen3.6-27b      vision-capable; revision-pinned candidate for Fleet cyber
+                     tasksets; requires a debug_minimal B300 validation run
     qwen3.8-27b      vision-capable; validated end-to-end with the Fleet
                      connector on text (ade-bench) and GUI (evaluation-
                      benchmark) tasksets (2026-08)
@@ -34,13 +36,14 @@ import typer
 
 import miles.utils.external_utils.command_utils as U
 
-ModelName = Literal["qwen3.8-27b"]
+ModelName = Literal["qwen3.6-27b", "qwen3.8-27b"]
 
 
 @dataclass(frozen=True)
 class _Recipe:
     hf_org: str
     hf_name: str
+    hf_revision: str | None
     tito_model: str
     max_tokens_per_gpu: int
     # rollout engine: GPUs per sglang engine (None => one engine spanning all)
@@ -57,6 +60,23 @@ class _Recipe:
 
 
 _RECIPES: dict[str, _Recipe] = {
+    # Qwen3.6-27B has the same dense hybrid-GDN geometry as Qwen3.8-27B.
+    # Keep the proven B300/FSDP resource recipe, but use Qwen3.6's distinct
+    # TITO template and pin the exact reviewed checkpoint revision.
+    "qwen3.6-27b": _Recipe(
+        hf_org="Qwen",
+        hf_name="Qwen3.6-27B",
+        hf_revision="6a9e13bd6fc8f0983b9b99948120bc37f49c13e9",
+        tito_model="qwen36",
+        vision=True,
+        sglang_mem_fraction=0.8,
+        max_response_len=24576,
+        max_context_len=30720,
+        max_tokens_per_gpu=9216,
+        rollout_gpus_per_engine=1,
+        sglang_extra="--sglang-attention-backend triton ",
+        train_extra="--fleet-screenshot-max-dim 1024 ",
+    ),
     # Vision-capable (Qwen3_5ForConditionalGeneration). Engine TP=1 (sglang
     # TP>1 garbage for this family on the pinned version, sglang#21039).
     # Memory at the full 30720 context: ~65GB fixed per rank (params + grads
@@ -66,6 +86,7 @@ _RECIPES: dict[str, _Recipe] = {
     "qwen3.8-27b": _Recipe(
         hf_org="Qwen",
         hf_name="Qwen3.8-27B",
+        hf_revision=None,
         tito_model="qwen35",
         vision=True,
         sglang_mem_fraction=0.8,
@@ -119,15 +140,24 @@ class ScriptArgs(U.ExecuteTrainConfig):
         return _RECIPES[self.model_name]
 
 
+def _hf_checkpoint_path(args: ScriptArgs) -> Path:
+    """Return the model directory, including an immutable revision when set."""
+    path = Path(args.model_dir) / args.recipe.hf_name
+    if args.recipe.hf_revision:
+        path /= args.recipe.hf_revision
+    return path
+
+
 def prepare(args: ScriptArgs):
     """Idempotent: skips work whose output already exists, so concurrent jobs
     serialized by the launch manifest's flock share one downloaded model.
     FSDP loads the HF checkpoint directly; there is no conversion step."""
     recipe = args.recipe
-    hf_dir = Path(args.model_dir) / recipe.hf_name
+    hf_dir = _hf_checkpoint_path(args)
     U.exec_command_cpu(f"mkdir -p {args.model_dir} {args.data_dir}")
     if not (hf_dir / "config.json").exists():
-        U.exec_command_cpu(f"hf download {recipe.hf_org}/{recipe.hf_name} --local-dir {hf_dir}")
+        revision_arg = f" --revision {recipe.hf_revision}" if recipe.hf_revision else ""
+        U.exec_command_cpu(f"hf download {recipe.hf_org}/{recipe.hf_name}{revision_arg} --local-dir {hf_dir}")
 
 
 def execute(args: ScriptArgs):
@@ -145,7 +175,7 @@ def execute(args: ScriptArgs):
         fixed_template_path = str(Path(U.repo_base_dir) / recipe.chat_template)
     else:
         fixed_template_path, _ = resolve_fixed_chat_template(recipe.tito_model)
-    hf_path = f"{args.model_dir}/{recipe.hf_name}"
+    hf_path = str(_hf_checkpoint_path(args))
     load_save_path = f"{args.output_dir}/{args.run_id}/checkpoints"
     debug = args.mode == "debug_minimal"
     few_steps = args.mode != "normal"

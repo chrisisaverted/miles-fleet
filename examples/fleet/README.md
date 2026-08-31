@@ -55,6 +55,13 @@ under `examples/fleet/` and miles itself is unmodified.
 | `launch/submit_run.py` | run JSON to RayJob |
 | `launch/examples/` | working run JSONs |
 
+The launcher currently contains two dense-Qwen recipes:
+
+| `--model-name` | Checkpoint policy | Validation status |
+|---|---|---|
+| `qwen3.8-27b` | Existing Qwen3.8 path and template | End-to-end B300 text and vision smokes passed |
+| `qwen3.6-27b` | Exact Hugging Face revision `6a9e13bd6fc8f0983b9b99948120bc37f49c13e9`; Qwen3.6 fixed TITO template | Candidate; run `debug_minimal` before production |
+
 ## 3. The run JSON
 
 A run is five things (a name, an image, a command, how many GPUs, and env
@@ -84,6 +91,10 @@ variables) plus secrets. Working examples: [`launch/examples/`](launch/examples/
 | `gpus_per_worker` | GPUs per machine, normally 8 |
 | `env` | environment variables for every pod. `run.sh` reads `TASKSET_REF` and `TASK_LIMIT` ("0" = all tasks). `RUN_ID` defaults to `name`. |
 | `secrets` | cluster secrets exposed as environment variables. `wandb-api` is always added; your Fleet login becomes a fresh secret at submit time. |
+
+For reproducible experiments, set `TASKSET_REF` to an immutable Registry
+reference such as `registry-alpha.fleetai.me/<namespace>/<repository>@sha256:<digest>`.
+Mutable `:tag` references remain supported for compatibility.
 
 ## 4. One-time setup
 
