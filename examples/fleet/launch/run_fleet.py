@@ -219,6 +219,14 @@ _RECIPES: dict[str, _Recipe] = {
             # nodes have 2.7TB RAM but only ~956GB node disk, which filled
             # and killed the offload after step 0 (attempt 10, 2026-08-29).
             "--offload-train-target cpu "
+            # TRAIN ACTORS ONLY (actor_factory.py applies this dict to them
+            # and nothing else), which is the whole point: the engines die on
+            # expandable segments because torch_memory_saver cannot release
+            # them. The trainer has the opposite problem. At the step-2 OOM
+            # 8.91 GB was reserved by the caching allocator but unallocated,
+            # so free memory sat in blocks smaller than the 1.50 GB the KDA
+            # backward kernel asked for. One growable mapping strands less.
+            """--train-env-vars '{"PYTORCH_CUDA_ALLOC_CONF":"expandable_segments:True"}' """
             "--model-name glm5_next "
             "--qkv-format thd "
             "--rollout-health-check-interval 300 "
@@ -260,11 +268,16 @@ _RECIPES: dict[str, _Recipe] = {
             # the concurrency we run; watch the log for a fallback-to-CPU
             # message, which is how the pool tells you it is too small.
             "SGLANG_MM_FEATURE_CACHE_MB": "4096",
-            # The same OOM had 8.91 GB reserved by the caching allocator but
-            # unallocated, i.e. free memory chopped into blocks too small for
-            # the 1.50 GB the kernel asked for. Expandable segments let the
-            # allocator grow one mapping instead of stranding fixed blocks.
-            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            # NO expandable_segments IN THIS DICT. It reaches every Ray actor,
+            # and on an engine it is fatal at startup:
+            #   RuntimeError: TorchMemorySaver is disabled for the current
+            #   process because expandable_segments is not supported yet.
+            # miles sleeps and wakes the colocated engines through
+            # torch_memory_saver, which cannot release expandable segments, so
+            # the colocated design depends on the default allocator there.
+            # The trainer wants it, and gets it via --train-env-vars in
+            # misc_extra below, which actor_factory.py applies to the train
+            # actors alone.
             "PYTHONFAULTHANDLER": "1",
             "TORCHINDUCTOR_COMPILE_THREADS": "1",
             "TRITON_CACHE_DIR": "/tmp/triton_cache",
