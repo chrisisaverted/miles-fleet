@@ -35,6 +35,10 @@ from miles.rollout.base_types import GenerateFnInput, GenerateFnOutput
 from miles.utils.types import Sample
 
 from examples.fleet.agent import AgentConfig, EpisodeStats, run_agent
+from examples.fleet.authoritative import (
+    AUTHORITATIVE_BACKEND,
+    AuthoritativeCyberSession,
+)
 from examples.fleet.recording import Recorder
 from examples.fleet.session import FleetSession, SessionConfig, sweep_leaked_networks
 
@@ -101,15 +105,41 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
     assert not args.partial_rollout, "fleet episodes own live container state; partial rollout is not supported"
 
     base_sample = deepcopy(input.sample)
-    _startup_once()
-
     metadata = dict(base_sample.metadata or {})
     taskset_ref = metadata.get("taskset_ref")
     task_key = metadata.get("task_key")
     if not taskset_ref or not task_key:
         raise ValueError("dataset row metadata must carry taskset_ref and task_key (see prepare_dataset.py)")
 
-    session = FleetSession(taskset_ref, task_key, _session_config(args))
+    backend = metadata.get("fleet_backend", "local")
+    if backend == AUTHORITATIVE_BACKEND:
+        required = (
+            "task_version_id",
+            "environment_version_id",
+            "verifier_version_id",
+            "env_key",
+            "env_version",
+            "data_key",
+            "data_version",
+            "task_prompt",
+            "reward_objective",
+        )
+        missing = [key for key in required if not metadata.get(key)]
+        if missing:
+            raise ValueError(f"authoritative dataset row is missing immutable binding fields: {missing}")
+        session = AuthoritativeCyberSession(
+            task_key=task_key,
+            task_version_id=metadata["task_version_id"],
+            instructions=metadata["task_prompt"],
+            objective=metadata["reward_objective"],
+            config=_session_config(args),
+            expected_binding={key: metadata[key] for key in ("env_key", "env_version", "data_key", "data_version")},
+        )
+    elif backend == "local":
+        _startup_once()
+        session = FleetSession(taskset_ref, task_key, _session_config(args))
+    else:
+        raise ValueError(f"unsupported Fleet rollout backend {backend!r}")
     stats = EpisodeStats()
     if args.save_debug_trajectory_data is not None:
         stats.trajectory = []
@@ -154,6 +184,10 @@ async def generate(input: GenerateFnInput) -> GenerateFnOutput:
         "segments": len(recorder.segments),
         "verifier_failed": 1.0 if result.grade.verifier_failed else 0.0,
         "attempt_id": session.attempt_id,
+        "reward_objective": metadata.get("reward_objective"),
+        "safe_success": getattr(session, "safe_success", None),
+        "raw_capability_reward": getattr(session, "raw_capability_reward", None),
+        "verifier_execution_id": getattr(session, "verifier_execution_id", None),
     }
     return _output(recorder.finalize(result.grade.reward, episode_meta, env_time=stats.env_time))
 

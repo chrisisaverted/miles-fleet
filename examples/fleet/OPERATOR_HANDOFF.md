@@ -3,8 +3,10 @@
 This procedure records the reproducibility gates for a future queue-safe,
 two-round Qwen3.6-27B smoke from the frozen 129-task Fleet selection. It does
 not currently authorize publishing the TaskSet or submitting the training job.
-Do not cross either state-changing gate without explicit approval and without
-the verifier-authority gate in section 2 being implemented and tested.
+The model identity is exactly `Qwen/Qwen3.6-27B` at revision
+`6a9e13bd6fc8f0983b9b99948120bc37f49c13e9`; substituting another revision is
+a different experiment. Do not cross either state-changing gate without
+explicit approval and a deployed, dry-run-validated verifier-authority path.
 
 Never paste credentials into a run JSON, ledger, terminal transcript, pull
 request, or task artifact. Use the normal authenticated clients and environment
@@ -60,13 +62,13 @@ uniqueness checks, or any subsequent pin check fails.
 
 The topology change removes one known export blocker, but the dry run must
 still prove each selected verifier is importable. Export success itself is not
-proof that LocalRuntime can grade these tasks. Current Miles grading calls the
-compatibility verifier without a server-checked `cyber_verification_context`; authoritative
-v3 verification therefore fails closed. Platform also has no runtime-owned
-attempt-provenance channel for the protected `CYBER_EVIDENCE_*` and behavior
-policy variables. Do not put those values into authored task environment
-variables: that would make agent-visible immutable content impersonate a
-platform attestation.
+proof that LocalRuntime can grade these tasks. The authoritative backend added
+in this branch deliberately does not ask LocalRuntime to grade them: the
+immutable TaskSet supplies the exact prompt and TaskDump v7 identity, while the
+deployed Fleet rollout-reward API provisions the live environment and
+constructs the protected v3 evidence context. Do not put `CYBER_EVIDENCE_*` or
+behavior-policy values into authored task environment variables: that would
+make agent-visible immutable content impersonate a platform attestation.
 
 Before any TaskSet publication or job submission, a trusted integration must:
 
@@ -75,12 +77,25 @@ Before any TaskSet publication or job submission, a trusted integration must:
 2. retain the report-only finalized evidence and protected behavior bundle;
 3. have a service validate both bundles, construct the checked v3 context, and
    execute the exact `verifier_version_id`; and
-4. return the structured v3 result to Miles. This smoke pins
+4. return the structured v3 result to Miles. The adapter rejects a response
+   unless task/version/instance identity, report-only projection binding,
+   production verifier execution, and authoritative evidence all agree.
+
+The API does not echo environment-version or verifier-version row UUIDs in its
+structured response. The immutable TaskSet therefore remains the client-side
+source of those exact pins: its TaskDump v7 provenance is checked before the
+rollout, the live instance's environment/data key+version are compared to it,
+and the Fleet score route independently checks the task version's pinned
+verifier against server-owned runtime evidence. Do not claim that the response
+itself attests UUID fields it does not return.
+
+This smoke pins
    `safe_success_v1`: training reward is `1` exactly when the checked structured
-   result has `diagnostics.safe_success == true`, otherwise `0`; the raw
-   capability reward is retained separately. The mapping is explicit because
-   the top-level v3 reward measures exploit capability and does not penalize
-   unsafe behavior by itself.
+   result has `diagnostics.safe_success == true` and `0` when it is explicitly
+   false; a missing or non-boolean value rejects the sample. The raw capability
+   reward is retained separately. The mapping is explicit and does not assume
+   that every task generation gives the top-level reward identical behavior
+   semantics.
 
 Patch-bearing v3 tasks are outside this smoke's scope: they need Theseus's
 hidden post-rollout oracle in a still-live managed session.
@@ -185,15 +200,24 @@ in the run JSON:
   "pool": "gpu-b300",
   "env": {
     "TASKSET_REF": "registry-alpha.fleetai.me/fleet/cysec1-2-current-gen@sha256:<approved-taskset-digest>",
-    "TASK_LIMIT": "1"
+    "TASK_LIMIT": "1",
+    "FLEET_BACKEND": "fleet_authoritative_cyber_v1",
+    "FLEET_REWARD_OBJECTIVE": "safe_success_v1"
   },
-  "secrets": ["wandb-api"]
+  "secrets": ["wandb-api", "fleet-api"]
 }
 ```
 
-`TASK_LIMIT=1` is the smallest existing Fleet cyber slice; it does not invent
-a new taskset. The launcher still performs two rollout/training rounds in
-`debug_minimal` mode. Hash this exact JSON and record its SHA-256 in the ledger.
+For `safe_success_v1`, the immutable TaskSet must contain a reviewed
+behavior-bound task whose checked v3 diagnostics produce a boolean
+`safe_success`. `TASK_LIMIT=1` is only a cost cap; it is not a valid way to
+sample an arbitrary capability-only task and call it a safety objective. The
+launcher still performs two rollout/training rounds in `debug_minimal` mode.
+Hash this exact JSON and record its SHA-256 in the ledger.
+
+Do not submit until Theseus PR #28252 is merged and its public API deployment
+is confirmed. A locally green unit test proves parsing logic, not route
+deployment or managed-instance evidence finalization.
 
 Render and review the queued job without applying it:
 

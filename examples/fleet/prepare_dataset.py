@@ -30,6 +30,15 @@ import collections
 import json
 import os
 import random
+import uuid
+from collections.abc import Mapping
+
+from examples.fleet.authoritative import (
+    AUTHORITATIVE_BACKEND,
+    RAW_CAPABILITY_OBJECTIVE,
+    REPORT_ONLY_SUFFIX,
+    SUPPORTED_OBJECTIVES,
+)
 
 # Seed payloads stream into env containers via `docker cp` under the SDK's
 # docker-op timeout (configurable since platform#470; runs export
@@ -63,15 +72,64 @@ def eligible(task, max_seed_bytes: int = MAX_SEED_BYTES) -> tuple[bool, str]:
     return True, ""
 
 
+def _taskdump_binding(task) -> dict[str, str]:
+    """Read exact Fleet row provenance sealed into a TaskDump v7 TaskSet.
+
+    TaskDump stores this under the code evaluator's ``params.task``.  It is
+    immutable Task content, unlike a mutable registry tag or API current row.
+    """
+    candidates = []
+    for verifier in getattr(task, "verifiers", None) or ():
+        evaluator = getattr(verifier, "evaluator", None)
+        params = getattr(evaluator, "params", None)
+        value = params.get("task") if isinstance(params, Mapping) else None
+        if isinstance(value, Mapping) and value.get("task_version_id"):
+            candidates.append(value)
+    if len(candidates) != 1:
+        raise ValueError(f"task {task.task_id!r} must carry exactly one TaskDump v7 binding; found {len(candidates)}")
+    raw = candidates[0]
+    required = {
+        "task_key": "task_key",
+        "task_version_id": "task_version_id",
+        "environment_version_id": "environment_version_id",
+        "verifier_version_id": "verifier_version_id",
+        "environment_key": "env_key",
+        "environment_version": "env_version",
+        "data_key": "data_key",
+        "data_version": "data_version",
+    }
+    binding: dict[str, str] = {}
+    for source, target in required.items():
+        value = raw.get(source)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"task {task.task_id!r} binding is missing {source}")
+        binding[target] = value
+    for field in ("task_version_id", "environment_version_id", "verifier_version_id"):
+        binding[field] = str(uuid.UUID(binding[field]))
+    if binding["task_key"] != task.task_id:
+        raise ValueError(f"task identity mismatch: TaskSet has {task.task_id!r}, binding has {binding['task_key']!r}")
+    if not binding["task_key"].endswith(REPORT_ONLY_SUFFIX):
+        raise ValueError(f"authoritative cyber backend supports only {REPORT_ONLY_SUFFIX} projections")
+    return binding
+
+
 def build_rows(taskset, taskset_ref: str, args) -> tuple[list[dict], list[tuple[str, str]]]:
     rows, skipped = [], []
+    backend = getattr(args, "backend", "local")
+    objective = getattr(args, "reward_objective", RAW_CAPABILITY_OBJECTIVE)
+    if backend == AUTHORITATIVE_BACKEND and objective not in SUPPORTED_OBJECTIVES:
+        raise ValueError(f"unsupported authoritative reward objective {objective!r}")
     for compiled in taskset.tasks:
         task = compiled.task
-        ok, why = eligible(task)
+        ok, why = eligible(
+            task,
+            max_seed_bytes=0 if backend == AUTHORITATIVE_BACKEND else MAX_SEED_BYTES,
+        )
         if not ok:
             skipped.append((task.task_id, why))
             continue
         instructions = task.steps[0].prompt or ""
+        authoritative = _taskdump_binding(task) if backend == AUTHORITATIVE_BACKEND else {}
         rows.append(
             {
                 "input": [{"role": "user", "content": instructions}],
@@ -82,6 +140,16 @@ def build_rows(taskset, taskset_ref: str, args) -> tuple[list[dict], list[tuple[
                     "data_source": taskset.name or taskset_ref,
                     "steps": len(task.steps),
                     "context_profile": str(getattr(task, "context_profile", "")).rsplit(".", 1)[-1].lower(),
+                    **(
+                        {
+                            "fleet_backend": AUTHORITATIVE_BACKEND,
+                            "reward_objective": objective,
+                            "task_prompt": instructions,
+                            **authoritative,
+                        }
+                        if authoritative
+                        else {}
+                    ),
                 },
             }
         )
@@ -115,6 +183,18 @@ def main() -> None:
     parser.add_argument("--eval-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-tasks", type=int, default=0, help="0 = all; seeded random subset otherwise")
+    parser.add_argument(
+        "--backend",
+        choices=("local", AUTHORITATIVE_BACKEND),
+        default="local",
+        help="where environments and grading run",
+    )
+    parser.add_argument(
+        "--reward-objective",
+        choices=tuple(sorted(SUPPORTED_OBJECTIVES)),
+        default=RAW_CAPABILITY_OBJECTIVE,
+        help=("named authoritative v3 objective; safe_success_v1 requires checked behavior evidence on every selected task"),
+    )
     args = parser.parse_args()
 
     from fleet_runtime.cli.sources import resolve_source
@@ -147,21 +227,11 @@ def main() -> None:
         _write_jsonl(os.path.join(args.output_dir, "eval.jsonl"), eval_rows)
 
     selected = {r["metadata"]["task_key"] for r in rows}
-    needed = sorted(
-        {
-            str(env.image_ref)
-            for compiled in taskset.tasks
-            if compiled.task.task_id in selected
-            for env in (getattr(compiled.task, "environments", None) or {}).values()
-        }
-    )
+    needed = [] if args.backend == AUTHORITATIVE_BACKEND else sorted({str(env.image_ref) for compiled in taskset.tasks if compiled.task.task_id in selected for env in (getattr(compiled.task, "environments", None) or {}).values()})
     with open(os.path.join(args.output_dir, "images.txt"), "w") as f:
         f.write("\n".join(needed) + ("\n" if needed else ""))
     print(f"images.txt: {len(needed)} env images for {len(selected)} tasks")
-    print(
-        f"taskset={taskset.name!r} root={taskset.root_digest[:24]} "
-        f"train={len(train_rows)} eval={len(eval_rows)} -> {args.output_dir}"
-    )
+    print(f"taskset={taskset.name!r} root={taskset.root_digest[:24]} train={len(train_rows)} eval={len(eval_rows)} -> {args.output_dir}")
 
 
 if __name__ == "__main__":
