@@ -19,6 +19,7 @@ SOURCE_REPOSITORY="${1:-fleet-ai/miles-fleet}"
 REF="${2:-fleet-integration}"
 EXPECTED_COMMIT="${3:-$(git -C "$REPO_DIR" rev-parse "$REF")}"
 CACHE_TAG="${CACHE_TAG:-latest}"
+BUILD_JOB_PREFIX="${BUILD_JOB_PREFIX:-miles-build}"
 
 case "$SOURCE_REPOSITORY" in
   */*) ;;
@@ -32,7 +33,14 @@ esac
   exit 1
 }
 SHA="${EXPECTED_COMMIT%${EXPECTED_COMMIT#????????}}"
-BUILD_JOB="miles-build-${SHA}"
+BUILD_JOB="${BUILD_JOB_PREFIX}-${SHA}"
+case "$BUILD_JOB" in
+  ""|-*|*-|*[!a-z0-9-]*) echo "BUILD_JOB_PREFIX must produce a lowercase DNS-safe job name" >&2; exit 1 ;;
+esac
+[ "${#BUILD_JOB}" -le 63 ] || {
+  echo "build job name exceeds 63 characters: $BUILD_JOB" >&2
+  exit 1
+}
 
 if [ -n "${GH_TOKEN:-}" ]; then
   "${KUBECTL[@]}" create secret generic img-build-secrets \
@@ -46,8 +54,8 @@ if "${KUBECTL[@]}" get job "$BUILD_JOB" >/dev/null 2>&1; then
   exit 1
 fi
 
-export SHA SOURCE_REPOSITORY REF EXPECTED_COMMIT CACHE_TAG
-envsubst '$SHA $SOURCE_REPOSITORY $REF $EXPECTED_COMMIT $CACHE_TAG' \
+export BUILD_JOB SHA SOURCE_REPOSITORY REF EXPECTED_COMMIT CACHE_TAG
+envsubst '$BUILD_JOB $SHA $SOURCE_REPOSITORY $REF $EXPECTED_COMMIT $CACHE_TAG' \
   < "$(dirname "$0")/build_job.yaml.tmpl" | "${KUBECTL[@]}" create -f -
 
 echo "source:    ${SOURCE_REPOSITORY}@${EXPECTED_COMMIT} (fetched as ${REF})"

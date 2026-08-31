@@ -328,7 +328,8 @@ fork PR, name that fork and branch explicitly:
 
 ```bash
 MILES_COMMIT="$(git rev-parse HEAD)"
-./examples/fleet/launch/build_image.sh \
+BUILD_JOB_PREFIX=chris-cyber-miles-build \
+  ./examples/fleet/launch/build_image.sh \
   chrisisaverted/miles-fleet \
   codex/qwen36-revision-pinned-recipe \
   "$MILES_COMMIT"

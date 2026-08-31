@@ -5,7 +5,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: miles-build-${SHA}
+  name: ${BUILD_JOB}
   namespace: fleet-train-jobs
   labels: {app: img-build}
 spec:

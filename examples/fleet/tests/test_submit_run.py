@@ -81,6 +81,8 @@ def test_image_builder_fetches_and_checks_exact_commit_without_mutating_latest()
     template = (launch_dir / "build_job.yaml.tmpl").read_text(encoding="utf-8")
 
     assert 'EXPECTED_COMMIT="${3:-$(git -C "$REPO_DIR" rev-parse "$REF")}"' in script
+    assert 'BUILD_JOB="${BUILD_JOB_PREFIX}-${SHA}"' in script
+    assert "name: ${BUILD_JOB}" in template
     assert "refusing to replace existing build job" in script
     assert " delete job " not in script
     assert 'git fetch -q --depth 1 origin "${REF}"' in template
