@@ -93,6 +93,17 @@ def test_image_builder_fetches_and_checks_exact_commit_without_mutating_latest()
     assert 'timeout 300 docker pull "ghcr.io/fleet-ai/miles-fleet/trainer:${CACHE_TAG}"' in template
 
 
+def test_model_prestage_is_revision_pinned_and_never_replaces_a_job() -> None:
+    launch_dir = Path(__file__).resolve().parents[1] / "launch"
+    script = (launch_dir / "prestage.py").read_text(encoding="utf-8")
+
+    assert 'parser.add_argument("--revision"' in script
+    assert "--revision {args.revision}" in script
+    assert "refusing to replace existing prestage job" in script
+    assert '["create", "-f", "-"]' in script
+    assert '["delete", "job"' not in script
+
+
 def test_authoritative_payload_load_requires_image_and_selection_digests(tmp_path: Path) -> None:
     payload = _payload(workers=1)
     payload.update(

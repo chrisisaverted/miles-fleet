@@ -121,7 +121,10 @@ model revision, trainer image digest, queued job, and resulting checkpoints.
 ## 5. Pre-stage model weights (optional, saves GPU hours)
 
 ```bash
-./examples/fleet/launch/prestage.py zai-org/GLM-5.3-Flash-BF16
+./examples/fleet/launch/prestage.py Qwen/Qwen3.6-27B \
+  --revision 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9 \
+  --image ghcr.io/fleet-ai/miles-fleet/trainer@sha256:<immutable-trainer-digest> \
+  --job-name chris-cyber-qwen36-27b-prestage-01
 ```
 
 Weights live on the shared filesystem and download only once; but by
@@ -131,7 +134,8 @@ command does the same download as a small job on the CPU machines instead.
 Run it when you plan a run with a model the cluster has not seen; a
 training job submitted afterwards finds the weights ready. It is safe to
 skip and safe to run concurrently with a training job: both sides take the
-same lock.
+same lock. The helper refuses to replace an existing job; use a new meaningful
+name for a retry rather than deleting someone else's work.
 
 ## 6. Build the image
 
