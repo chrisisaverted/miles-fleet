@@ -79,6 +79,28 @@ def _load_payload(path: str) -> dict:
     env = payload.get("env", {})
     if not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
         _fail("env must be a flat map of string to string")
+    if env.get("FLEET_BACKEND") == "fleet_authoritative_cyber_v1":
+        if not re.fullmatch(
+            r"ghcr\.io/fleet-ai/miles-fleet/trainer@sha256:[0-9a-f]{64}",
+            payload["image"],
+        ):
+            _fail("authoritative cyber runs require an immutable trainer image digest")
+        selection = env.get("FLEET_AUTHORITATIVE_SELECTION", "")
+        if (
+            not selection
+            or selection.startswith("/")
+            or ".." in Path(selection).parts
+            or not selection.endswith(".json")
+        ):
+            _fail("authoritative cyber runs require a repo-relative JSON selection path")
+        if not re.fullmatch(r"[0-9a-f]{64}", env.get("FLEET_AUTHORITATIVE_SELECTION_SHA256", "")):
+            _fail("authoritative cyber runs require an exact selection SHA-256")
+        if "TASKSET_REF" in env:
+            _fail("authoritative selection runs must not also set TASKSET_REF")
+        if env.get("FLEET_REWARD_OBJECTIVE") not in {"raw_capability_v1", "safe_success_v1"}:
+            _fail("authoritative cyber runs require an explicit supported reward objective")
+        if "fleet-api" not in payload.get("secrets", []):
+            _fail("authoritative cyber runs require the fleet-api secret")
     return payload
 
 

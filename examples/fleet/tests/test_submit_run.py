@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
-from examples.fleet.launch.submit_run import _render
+from examples.fleet.launch.submit_run import _load_payload, _render
 
 
 def _payload(*, workers: int) -> dict:
@@ -89,3 +90,43 @@ def test_image_builder_fetches_and_checks_exact_commit_without_mutating_latest()
     assert 'test "$FETCHED_COMMIT" = "$EXPECTED_COMMIT"' in template
     assert 'docker push "ghcr.io/fleet-ai/miles-fleet/trainer:${SHA}"' in template
     assert "docker push ghcr.io/fleet-ai/miles-fleet/trainer:latest" not in template
+    assert 'timeout 300 docker pull "ghcr.io/fleet-ai/miles-fleet/trainer:${CACHE_TAG}"' in template
+
+
+def test_authoritative_payload_load_requires_image_and_selection_digests(tmp_path: Path) -> None:
+    payload = _payload(workers=1)
+    payload.update(
+        image="ghcr.io/fleet-ai/miles-fleet/trainer@sha256:" + "a" * 64,
+        env={
+            "FLEET_BACKEND": "fleet_authoritative_cyber_v1",
+            "FLEET_REWARD_OBJECTIVE": "raw_capability_v1",
+            "FLEET_AUTHORITATIVE_SELECTION": "examples/fleet/launch/selection.json",
+            "FLEET_AUTHORITATIVE_SELECTION_SHA256": "b" * 64,
+        },
+    )
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps(payload))
+    assert _load_payload(str(path)) == payload
+
+    payload["image"] = "ghcr.io/fleet-ai/miles-fleet/trainer:latest"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(SystemExit):
+        _load_payload(str(path))
+
+
+def test_authoritative_payload_rejects_taskset_mixing(tmp_path: Path) -> None:
+    payload = _payload(workers=1)
+    payload.update(
+        image="ghcr.io/fleet-ai/miles-fleet/trainer@sha256:" + "a" * 64,
+        env={
+            "FLEET_BACKEND": "fleet_authoritative_cyber_v1",
+            "FLEET_REWARD_OBJECTIVE": "raw_capability_v1",
+            "FLEET_AUTHORITATIVE_SELECTION": "examples/fleet/launch/selection.json",
+            "FLEET_AUTHORITATIVE_SELECTION_SHA256": "b" * 64,
+            "TASKSET_REF": "registry.example/taskset:mutable",
+        },
+    )
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(SystemExit):
+        _load_payload(str(path))
