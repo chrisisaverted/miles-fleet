@@ -60,6 +60,23 @@ def _parse(body, objective=auth.SAFE_SUCCESS_OBJECTIVE):
     )
 
 
+def test_fleet_sdk_rejects_verifier_only_facade(monkeypatch):
+    facade = types.ModuleType("fleet")
+    facade.ABI_VERSION = "v1"
+    monkeypatch.setitem(sys.modules, "fleet", facade)
+
+    with pytest.raises(auth.AuthoritativeContractError, match="shadowed"):
+        auth._fleet_sdk()
+
+
+def test_fleet_sdk_accepts_owner_client(monkeypatch):
+    sdk = types.ModuleType("fleet")
+    sdk.Fleet = lambda **_kwargs: None
+    monkeypatch.setitem(sys.modules, "fleet", sdk)
+
+    assert auth._fleet_sdk() is sdk
+
+
 def test_safe_success_objective_is_binary_and_retains_raw_capability():
     safe = _parse(_reward_body(safe_success=True, raw=0.75, reward=0.75))
     unsafe = _parse(_reward_body(safe_success=False, raw=1.0, reward=0.0))

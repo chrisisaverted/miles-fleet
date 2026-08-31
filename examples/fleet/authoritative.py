@@ -33,6 +33,29 @@ class AuthoritativeContractError(RuntimeError):
     """Fleet returned a response that cannot safely train against."""
 
 
+def _fleet_sdk():
+    """Load the owner SDK and reject the verifier-only compatibility facade.
+
+    ``fleet-runtime`` and ``fleet-python`` both currently ship a top-level
+    ``fleet`` package.  If the runtime wheel is installed last, its guarded
+    verifier facade replaces the SDK's ``__init__`` and authoritative rollout
+    provisioning cannot start.  Keep this check on the exact import path used
+    by :meth:`AuthoritativeCyberSession.open` so image builds fail before a
+    paid job can enter Miles's unbounded aborted-sample replacement loop.
+    """
+    try:
+        import fleet
+    except ImportError as exc:
+        raise AuthoritativeContractError(
+            "Fleet owner SDK is unavailable; install fleet-python after fleet-runtime"
+        ) from exc
+    if not callable(getattr(fleet, "Fleet", None)):
+        raise AuthoritativeContractError(
+            "Fleet owner SDK is shadowed by a non-client fleet package; " "install fleet-python after fleet-runtime"
+        )
+    return fleet
+
+
 def _unit_float(value: Any, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise AuthoritativeContractError(f"{label} must be numeric")
@@ -319,7 +342,7 @@ class AuthoritativeCyberSession:
         self._graded = False
 
     def open(self) -> None:
-        import fleet
+        fleet = _fleet_sdk()
 
         from examples.fleet.session import _SUBMIT_SCHEMA, _within_budget
 

@@ -1,0 +1,36 @@
+{
+  "schema": "fleet.miles.failed-canary.v1",
+  "job": {
+    "name": "chris-cyber-qwen36-27b-capability-gate-01",
+    "rayjob_uid": "f167030a-9284-4b81-b17d-4c16c675282a",
+    "outer_job_id": "chris-cyber-qwen36-27b-capability-gate-01-t9tqq",
+    "inner_job_id": "raysubmit_32jBtMeCy1BC5DNY",
+    "cluster": "chris-cyber-qwen36-27b-capability-gate-01-thb2r",
+    "workload_uid": "b5e855ca-529e-430d-9440-1b42343840b9",
+    "queue": "training-cq",
+    "gpu_flavor": "b300-training",
+    "gpus": 8,
+    "trainer_image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:29b3f8df8b28982d7dc453396a8862ec5cc712ab32a0f408f767d22485cd95e7",
+    "source_commit": "d7c39a4142cd59d95b838ed2f3eb571cbb5b2139",
+    "created_at": "2026-08-31T06:30:02Z"
+  },
+  "outcome": {
+    "status": "invalid_infrastructure_abort",
+    "first_observed_at": "2026-08-31T06:49:12.339Z",
+    "error": "the fleet verifier facade is only importable inside a Fleet verification context (FLEET_VERIFIER_CONTEXT=1 must be set in the process environment)",
+    "abort_count_at_snapshot": 64439,
+    "fleet_instances_created": 0,
+    "model_tool_calls": 0,
+    "authoritative_rewards": 0,
+    "optimizer_steps": 0,
+    "checkpoint_files": 0,
+    "scientifically_usable": false
+  },
+  "cleanup": {
+    "action": "deleted_own_rayjob_after_conclusive_failure",
+    "requested_at": "2026-08-31T06:51:08Z",
+    "head_pod_deletion_timestamp": "2026-08-31T06:51:29Z",
+    "peer_jobs_modified": 0
+  },
+  "root_cause": "fleet-runtime overwrote fleet-python's fleet/__init__.py with its guarded verifier-only facade because both distributions own the same top-level package and the runtime payload landed last"
+}

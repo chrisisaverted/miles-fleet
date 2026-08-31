@@ -37,10 +37,14 @@ COPY . /root/miles
 RUN cd /root/miles && pip install -e . --no-deps
 
 # fleet-runtime pinned to the exact commit the flt binary is built from.
+# Both distributions currently own fleet/__init__.py.  Reinstall the public
+# owner SDK last so the runtime's verification-only compatibility facade cannot
+# shadow Fleet/Fleet.instance in a training process.
 RUN --mount=type=secret,id=gh_token \
     git config --global url."https://x-access-token:$(cat /run/secrets/gh_token)@github.com/".insteadOf "https://github.com/" \
     && pip install "fleet-runtime @ git+https://github.com/fleet-ai/platform.git@${PLATFORM_REF}#subdirectory=runtime" \
         "fleet-python==0.2.131" \
+    && pip install --force-reinstall --no-deps "fleet-python==0.2.131" \
     && (git config --global --unset-all url."https://x-access-token:$(cat /run/secrets/gh_token)@github.com/".insteadOf || true)
 
 COPY --from=flt-builder /flt /usr/local/bin/flt
@@ -50,6 +54,7 @@ ENV FLEET_FLT=/usr/local/bin/flt
 # integration import chain (miles + sglang + fleet_runtime + our modules).
 RUN cd /root/miles \
     && python -c "import examples.fleet.authoritative, examples.fleet.rollout, examples.fleet.session, examples.fleet.prepare_dataset; import importlib.util as u, sys; spec = u.spec_from_file_location('rf', 'examples/fleet/launch/run_fleet.py'); m = u.module_from_spec(spec); spec.loader.exec_module(m); print('fleet integration + launcher import OK')" \
+    && python -c "from examples.fleet.authoritative import _fleet_sdk; sdk = _fleet_sdk(); assert callable(sdk.Fleet); print('fleet owner SDK authoritative-open import OK')" \
     && python -c "import fleet_runtime; from fleet_runtime.cli.sources import resolve_source; print('fleet_runtime OK')" \
     && python -c "from miles.utils.chat_template_utils.tito_tokenizer import GLM47TITOTokenizer; print('tito OK')" \
     && (flt version || flt --version) \
