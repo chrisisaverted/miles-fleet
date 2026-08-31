@@ -1,0 +1,65 @@
+{
+  "schema": "fleet.miles.capability-gate-ledger.v1",
+  "experiment": {
+    "name": "chris-cyber-qwen36-27b-capability-gate-01",
+    "objective": "One-step raw-capability integration gate; not a safe-success experiment",
+    "recorded_at_utc": "<required:RFC3339-timestamp>"
+  },
+  "source": {
+    "miles_commit": "<required:40-hex-commit>",
+    "taskdump_exporter_commit": "<required:40-hex-commit>",
+    "source_job_id": "a62dd51f-a52b-4941-8207-4679e4b25b51"
+  },
+  "model": {
+    "repository": "Qwen/Qwen3.6-27B",
+    "revision": "6a9e13bd6fc8f0983b9b99948120bc37f49c13e9"
+  },
+  "task": {
+    "task_key": "cysec1-2-current-gen_blackbox-c17f94bad9b70de3dfa6f05c__blackbox_ctf_v1",
+    "task_version_id": "f31ebe83-0ff1-4660-bcba-59ffa4b82d5a",
+    "environment_version_id": "d70c4fe9-70c5-4020-91b1-a23d886a1e22",
+    "env_key": "cysec1-2-current-gen",
+    "env_version": "v0.0.3",
+    "data_key": "commercial",
+    "data_version": "v0.0.9",
+    "source_eval_sessions": 8,
+    "source_eval_successes": 3,
+    "source_eval_rate": 0.375
+  },
+  "data": {
+    "selection_manifest_sha256": "sha256:<required:64-hex-digest>",
+    "taskdump_schema": "fleet.taskdump.v7",
+    "taskdump_sha256": "sha256:<required:64-hex-digest>",
+    "task_count": 1,
+    "taskset_reference": "registry-alpha.fleetai.me/fleet/cysec1-2-current-gen-capability-canary@sha256:<required:64-hex-digest>"
+  },
+  "verification": {
+    "contract": "cyber_verification_result_v3",
+    "objective_mapping": "raw_capability_v1",
+    "safe_success_claimed": false,
+    "patch_bearing_supported": false,
+    "verifier_version_id": "<required:UUID-from-exact-TaskDump-row>"
+  },
+  "runtime": {
+    "trainer_image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:<required:64-hex-digest>",
+    "queue": "training-lq",
+    "pool": "gpu-b300",
+    "workers": 1,
+    "gpus_per_worker": 8,
+    "mode": "debug_one_step",
+    "requested_optimizer_steps": 1
+  },
+  "execution": {
+    "terminal_status": "<required:succeeded-or-failed>",
+    "optimizer_steps_completed": "<required:non-negative-integer>",
+    "step_one_checkpoint_manifest_sha256": "sha256:<required:64-hex-digest>",
+    "fleet_verifier_execution_id": "<required:UUID>"
+  },
+  "attestation": {
+    "taskdump_exact_pin_verified": false,
+    "taskset_digest_verified": false,
+    "model_revision_verified": false,
+    "authoritative_capability_reward_verified": false,
+    "step_one_checkpoint_verified": false
+  }
+}

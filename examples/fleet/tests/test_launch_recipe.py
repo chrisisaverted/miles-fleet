@@ -88,6 +88,27 @@ def test_qwen36_training_reads_the_revision_pinned_checkpoint(monkeypatch, tmp_p
     assert "qwen3.6_fixed.jinja" in train_args
 
 
+def test_one_step_gate_requests_one_rollout_and_step_one_checkpoint(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(run_fleet.U, "execute_train", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(run_fleet.U, "get_default_wandb_args", lambda *args, **kwargs: "")
+    args = run_fleet.ScriptArgs(
+        model_name="qwen3.6-27b",
+        model_dir=str(tmp_path / "models"),
+        data_dir=str(tmp_path / "data"),
+        output_dir=str(tmp_path / "output"),
+        dataset_dir=str(tmp_path / "dataset"),
+        mode="debug_one_step",
+    )
+
+    run_fleet.execute(args)
+
+    train_args = str(captured["train_args"])
+    assert "--num-rollout 1 " in train_args
+    assert "--save-interval 1 " in train_args
+    assert "--rollout-max-response-len 512 " in train_args
+
+
 def test_qwen38_checkpoint_path_and_download_are_unchanged(monkeypatch, tmp_path: Path) -> None:
     commands: list[str] = []
     monkeypatch.setattr(run_fleet.U, "exec_command_cpu", commands.append)

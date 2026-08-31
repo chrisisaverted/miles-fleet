@@ -115,7 +115,7 @@ _RECIPES: dict[str, _Recipe] = {
 @dataclass
 class ScriptArgs(U.ExecuteTrainConfig):
     model_name: ModelName = "qwen3.8-27b"
-    mode: Literal["normal", "debug_minimal", "rollout_only"] = "normal"
+    mode: Literal["normal", "debug_minimal", "debug_one_step", "rollout_only"] = "normal"
     run_id: str = U.create_run_id()
     dataset_dir: str = "/root/datasets/fleet/ade-bench"
     num_gpus_per_node: int = 8
@@ -177,7 +177,8 @@ def execute(args: ScriptArgs):
         fixed_template_path, _ = resolve_fixed_chat_template(recipe.tito_model)
     hf_path = str(_hf_checkpoint_path(args))
     load_save_path = f"{args.output_dir}/{args.run_id}/checkpoints"
-    debug = args.mode == "debug_minimal"
+    debug = args.mode in {"debug_minimal", "debug_one_step"}
+    one_step = args.mode == "debug_one_step"
     few_steps = args.mode != "normal"
 
     ckpt_args = (
@@ -185,7 +186,7 @@ def execute(args: ScriptArgs):
         f"--ref-load {hf_path} "
         f"--load {load_save_path} "
         f"--save {load_save_path} "
-        f"--save-interval {2 if debug else 20} "
+        f"--save-interval {1 if one_step else 2 if debug else 20} "
     )
 
     fleet_args = (
@@ -208,7 +209,7 @@ def execute(args: ScriptArgs):
         "--label-key label "
         "--metadata-key metadata "
         "--rollout-shuffle "
-        f"--num-rollout {2 if few_steps else 200} "
+        f"--num-rollout {1 if one_step else 2 if few_steps else 200} "
         f"--rollout-batch-size {args.rollout_batch_size} "
         f"--n-samples-per-prompt {args.n_samples_per_prompt} "
         f"--rollout-max-response-len {512 if debug else recipe.max_response_len} "

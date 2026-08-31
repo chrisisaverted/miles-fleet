@@ -155,6 +155,69 @@ Record the TaskDump SHA-256, selector SHA-256, exporter commit, schema, and
 count in the ledger. The Registry import must report 129 tasks and no lowering,
 identity, or image-grounding errors.
 
+### Independent one-step capability gate
+
+Before any behavior-reward experiment, the same integration can be tested on
+one exact, ordinary raw-capability task. This is a separate experiment and must
+not be described as measuring or optimizing safe behavior. The reviewed
+candidate is:
+
+- task key
+  `cysec1-2-current-gen_blackbox-c17f94bad9b70de3dfa6f05c__blackbox_ctf_v1`;
+- task-version UUID `f31ebe83-0ff1-4660-bcba-59ffa4b82d5a`;
+- environment-version UUID `d70c4fe9-70c5-4020-91b1-a23d886a1e22`, label
+  `cysec1-2-current-gen:v0.0.3`;
+- data `commercial:v0.0.9`; and
+- source-job result 3/8, or 0.375, with all eight retained sessions agreeing on
+  the task-version UUID, environment label, and data version.
+
+Build a one-row selector by filtering the already-reviewed 129-row selector;
+never reconstruct the row by hand:
+
+```bash
+export CAPABILITY_TASK_VERSION_ID='f31ebe83-0ff1-4660-bcba-59ffa4b82d5a'
+export CAPABILITY_SELECTION='/tmp/cysec1-2-capability-canary.selection.v1.json'
+
+jq -e --arg task_version_id "$CAPABILITY_TASK_VERSION_ID" '
+  {schema, tasks: [.tasks[] | select(.task_version_id == $task_version_id)]}
+  | select((.tasks | length) == 1)
+' "$SELECTION" > "$CAPABILITY_SELECTION"
+```
+
+Export this selector through the same read-only TaskDump v7 command and stop
+unless the single record returns the exact task, environment, and data pins
+above plus a non-null verifier-version UUID. Stage it under a distinct
+TaskSet repository such as `fleet/cysec1-2-current-gen-capability-canary`; do
+not reuse or relabel the 129-task cohort.
+
+The queue-safe payload differs from the behavior smoke in exactly three
+scientific controls: the immutable TaskSet has one reviewed task, the reward
+objective is `raw_capability_v1`, and the launcher mode is `debug_one_step`.
+That mode requests one rollout/optimizer step and a step-one checkpoint:
+
+```json
+{
+  "name": "chris-cyber-qwen36-27b-capability-gate-01",
+  "image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:<resolved-digest>",
+  "command": "bash examples/fleet/launch/run.sh --model-name qwen3.6-27b --mode debug_one_step --num-nodes 1 --num-gpus-per-node 8 --max-turns 2 --max-concurrent-envs 1",
+  "workers": 1,
+  "gpus_per_worker": 8,
+  "pool": "gpu-b300",
+  "env": {
+    "TASKSET_REF": "registry-alpha.fleetai.me/fleet/cysec1-2-current-gen-capability-canary@sha256:<approved-taskset-digest>",
+    "TASK_LIMIT": "1",
+    "FLEET_BACKEND": "fleet_authoritative_cyber_v1",
+    "FLEET_REWARD_OBJECTIVE": "raw_capability_v1"
+  },
+  "secrets": ["wandb-api", "fleet-api"]
+}
+```
+
+Record this gate with `launch/capability-gate-ledger.template.json`. It remains
+blocked from submission until the TaskDump/TaskSet pins, trainer digest, and
+deployed Fleet rollout-reward route are all proven. A successful capability
+gate does not satisfy the behavior-bound selection gate below.
+
 ## 3. Stage the TaskSet locally, then stop at the publish gate
 
 Use the pinned Platform `flt` binary to import the file locally and inspect the
