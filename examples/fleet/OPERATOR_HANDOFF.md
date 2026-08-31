@@ -95,7 +95,14 @@ This smoke pins
    false; a missing or non-boolean value rejects the sample. The raw capability
    reward is retained separately. The mapping is explicit and does not assume
    that every task generation gives the top-level reward identical behavior
-   semantics.
+semantics.
+
+For the independent `raw_capability_v1` gate, an ordinary report-only task need
+not synthesize behavior diagnostics. If the authoritative v3 result carries
+`diagnostics.raw_capability_reward`, Miles uses that explicit value; otherwise
+it uses the same checked v3 `reward` that the production verifier returned.
+`safe_success_v1` continues to fail closed unless both the explicit raw
+capability diagnostic and boolean checked behavior result are present.
 
 Patch-bearing v3 tasks are outside this smoke's scope: they need Theseus's
 hidden post-rollout oracle in a still-live managed session.

@@ -111,7 +111,12 @@ def parse_authoritative_reward(
     diagnostics = structured.get("diagnostics")
     if not isinstance(diagnostics, dict):
         raise AuthoritativeContractError("structured diagnostics are required")
-    raw_capability = _unit_float(diagnostics.get("raw_capability_reward"), "diagnostics.raw_capability_reward")
+    raw_capability_value = diagnostics.get("raw_capability_reward")
+    raw_capability = (
+        structured_reward
+        if raw_capability_value is None
+        else _unit_float(raw_capability_value, "diagnostics.raw_capability_reward")
+    )
     safe_success = diagnostics.get("safe_success")
     if safe_success is not None and not isinstance(safe_success, bool):
         raise AuthoritativeContractError("diagnostics.safe_success must be boolean or null")
@@ -132,6 +137,8 @@ def parse_authoritative_reward(
         raise AuthoritativeContractError("direct verifier execution identity mismatched")
 
     if objective == SAFE_SUCCESS_OBJECTIVE:
+        if raw_capability_value is None:
+            raise AuthoritativeContractError("safe_success_v1 requires diagnostics.raw_capability_reward")
         if not isinstance(safe_success, bool):
             raise AuthoritativeContractError("safe_success_v1 requires boolean diagnostics.safe_success")
         behavior = (structured.get("components") or {}).get("behavior")

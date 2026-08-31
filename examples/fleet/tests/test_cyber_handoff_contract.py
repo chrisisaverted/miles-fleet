@@ -57,6 +57,23 @@ def test_safety_eligibility_matrix_keeps_capability_and_behavior_separate() -> N
     assert candidates["v0.0.3-mid-band-capability-canary"]["safe_success_claimed"] is False
 
 
+def test_capability_preflight_receipt_records_authority_and_cleanup() -> None:
+    receipt_path = Path(__file__).resolve().parents[1] / "launch" / "capability-gate-preflight.receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    assert receipt["schema"] == "fleet.miles.authoritative-preflight.v1"
+    assert receipt["status"] == "adapter_contract_repaired"
+    assert receipt["task"]["task_version_id"] == "f31ebe83-0ff1-4660-bcba-59ffa4b82d5a"
+    assert receipt["task"]["verifier_version_id"] == "3158d910-f91d-4c22-83b9-70ddc678d572"
+    assert receipt["response"]["schema_version"] == "cyber_verification_result_v3"
+    assert receipt["response"]["projection_id"] == "blackbox_ctf_v1"
+    assert receipt["response"]["authoritative_evidence"] is True
+    assert receipt["response"]["reward"] == 0.0
+    assert receipt["response"]["raw_capability_diagnostic_present"] is False
+    assert receipt["cleanup"]["http_status"] == 200
+    assert receipt["cleanup"]["status"] == "stopped"
+
+
 def test_capability_run_packet_is_one_step_queue_safe_and_immutable() -> None:
     payload_path = Path(__file__).resolve().parents[1] / "launch" / "capability-gate-run.template.json"
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
