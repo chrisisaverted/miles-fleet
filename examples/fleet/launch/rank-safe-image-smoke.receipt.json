@@ -1,0 +1,53 @@
+{
+  "schema": "fleet.miles.rank-safe-image-smoke.v1",
+  "recorded_at_utc": "2026-08-31T08:22:00Z",
+  "status": "immutable_image_and_runtime_smoke_passed",
+  "source": {
+    "miles_commit": "7ec46c1ea33bcc1d31c3aaa1c0d3849a5a6c6cc5",
+    "trainer_image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:6cd059e8327018bc7e783f3bff939bd9ebcf243d81b66d6422951e89c9223b37",
+    "intended_change": "Reject an FSDP Fleet launch before model allocation unless rollout_batch_size * n_samples_per_prompt is at least and divisible by num_nodes * num_gpus_per_node; the eight-rank capability gate now uses one prompt times eight samples."
+  },
+  "image_build": {
+    "job_name": "chris-cyber-miles-build-ranksafe-7ec46c1e",
+    "job_uid": "39d9bb13-ac47-414e-aa80-39354bbdc925",
+    "started_at": "2026-08-31T07:59:54Z",
+    "completed_at": "2026-08-31T08:19:55Z",
+    "status": "succeeded",
+    "exact_source_fetch_matched": true,
+    "build_time_smoke": {
+      "fleet_integration_and_launcher_import": "passed",
+      "owner_fleet_sdk_authoritative_open_import": "passed",
+      "fleet_runtime_import": "passed",
+      "tito_import": "passed"
+    },
+    "queue_note": "This zero-GPU builder was pinned to the large-disk GPU node pool but its existing template did not carry a Kueue label. Do not reuse that template until queue admission is added."
+  },
+  "runtime_smoke": {
+    "job_name": "chris-cyber-miles-ranksafe-smoke-r2-7ec46c1e",
+    "job_uid": "7137a24b-0b13-42d6-b4bd-35d4c704fcc8",
+    "queue": "default",
+    "queue_workload": "job-chris-cyber-miles-ranksafe-smoke-r2-7ec46c1e-4e576",
+    "queue_admission": "JobResumed",
+    "started_at": "2026-08-31T08:21:13Z",
+    "completed_at": "2026-08-31T08:21:35Z",
+    "status": "succeeded",
+    "assertions": {
+      "owner_fleet_sdk_authoritative_open_import": "passed",
+      "fleet_runtime_import": "passed",
+      "one_prompt_times_eight_samples_for_eight_ranks": "accepted",
+      "one_prompt_times_two_samples_for_eight_ranks": "rejected_before_training"
+    },
+    "warning_note": "A CPU-only import emitted optional Transformer Engine bridge-shim symbol warnings. The asserted Fleet imports and batch guard passed; the preceding GPU canary had already loaded all eight model and reference-model ranks with the same pinned CUDA base."
+  },
+  "preserved_failed_harness_attempt": {
+    "job_name": "chris-cyber-miles-ranksafe-smoke-7ec46c1e",
+    "job_uid": "9782ea89-2635-439f-9f3a-eca23730fa2b",
+    "status": "failed",
+    "cause": "The one-line Python smoke command contained literal escaped newline characters and failed with SyntaxError before imports. The corrected r2 job used an equivalent one-line unittest assertion and passed against the same immutable digest.",
+    "image_defect": false
+  },
+  "training_gate": {
+    "replacement_training_canary_submitted": false,
+    "reason": "The preceding paid canary proved authoritative rollout and reward but completed zero optimizer steps and wrote no durable checkpoint. This receipt validates the correction only; it is not evidence of training success."
+  }
+}
