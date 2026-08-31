@@ -69,7 +69,9 @@ spec:
               }
               git checkout -q --detach FETCH_HEAD
               echo "${GH_TOKEN}" | docker login ghcr.io -u x --password-stdin
-              docker pull "ghcr.io/fleet-ai/miles-fleet/trainer:${CACHE_TAG}" >/dev/null 2>&1 || true
+              # Cache warming is optional. Registry stalls must not spend the
+              # entire four-hour build deadline before the real build starts.
+              timeout 300 docker pull "ghcr.io/fleet-ai/miles-fleet/trainer:${CACHE_TAG}" >/dev/null 2>&1 || true
               export GH_TOKEN
               DOCKER_BUILDKIT=1 docker build -f examples/fleet/launch/Dockerfile \
                 --cache-from "ghcr.io/fleet-ai/miles-fleet/trainer:${CACHE_TAG}" \

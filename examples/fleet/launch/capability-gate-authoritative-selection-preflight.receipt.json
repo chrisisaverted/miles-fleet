@@ -1,0 +1,36 @@
+{
+  "schema": "fleet.miles.authoritative-selection-preflight.v1",
+  "recorded_at_utc": "2026-08-31T06:00:42Z",
+  "status": "passed_and_reaped",
+  "selection": {
+    "schema": "fleet.authoritative-selection.v1",
+    "sha256": "56602ed11012380d6cf2d1f00cefe6c13ac714ccfb2b71cf826af2a2043379db",
+    "public_account_team_matched": true,
+    "public_task_fields_and_hashes_matched": true,
+    "task_count": 1
+  },
+  "exact_binding": {
+    "task_key": "cysec1-2-current-gen_blackbox-c17f94bad9b70de3dfa6f05c__blackbox_ctf_v1",
+    "task_version_id": "f31ebe83-0ff1-4660-bcba-59ffa4b82d5a",
+    "environment_version_id": "d70c4fe9-70c5-4020-91b1-a23d886a1e22",
+    "verifier_version_id": "3158d910-f91d-4c22-83b9-70ddc678d572",
+    "env_key": "cysec1-2-current-gen",
+    "env_version": "v0.0.3",
+    "data_key": "commercial",
+    "data_version": "v0.0.9",
+    "objective": "raw_capability_v1"
+  },
+  "production_execution": {
+    "instance_id": "uugnwgob7cfb-n",
+    "evidence_run_id": "c9fd7bb4-9e4e-49cb-87e5-7685d4150b8e",
+    "verifier_execution_id": "460d730c-486e-40e9-81fe-4a7962ad9476",
+    "reward": 0.0,
+    "raw_capability_reward": 0.0
+  },
+  "cleanup": {
+    "client_close_completed": true,
+    "server_readback_http_status": 200,
+    "server_status": "stopped"
+  },
+  "scope": "No model inference or optimizer step ran. The frozen selection was hydrated, the exact-version authoritative route provisioned Fleet's server-owned seed and attachments, the production verifier ran on an empty report, and the managed instance was reaped. This is not TaskDump v7 and does not claim TaskDump equivalence."
+}

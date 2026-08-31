@@ -1,5 +1,8 @@
-# miles on the Fleet training cluster
-
+---
+title: "miles on the Fleet training cluster"
+description: "Trains tool-using models on Fleet task environments with local or authoritative cyber rollouts."
+# Generated from examples/fleet/README.md by scripts/tools/sync_example_docs.py. Edit that README, not this file.
+---
 Train a model on Fleet tasks: write one JSON file, submit it with one
 command. The cluster is `fleetai-training` on Nebius: 24 machines, 8 B300
 GPUs each (268GB per GPU), InfiniBand between machines.
@@ -65,7 +68,7 @@ The launcher currently contains two dense-Qwen recipes:
 ## 3. The run JSON
 
 A run is five things (a name, an image, a command, how many GPUs, and env
-variables) plus secrets. Working examples: [`launch/examples/`](launch/examples/).
+variables) plus secrets. Working examples: [`launch/examples/`](https://github.com/radixark/miles/tree/main/examples/fleet/launch/examples).
 
 ```json
 {
@@ -103,8 +106,8 @@ content under exact hashes, while Fleet's exact-version route provisions the
 server-owned seed and attachments and runs the production verifier.
 
 For the Qwen3.6 cyber smoke, follow the
-[`OPERATOR_HANDOFF.md`](OPERATOR_HANDOFF.md) gate-by-gate procedure and fill
-[`experiment-ledger.template.json`](launch/experiment-ledger.template.json).
+[`OPERATOR_HANDOFF.md`](https://github.com/radixark/miles/blob/main/examples/fleet/OPERATOR_HANDOFF.md) gate-by-gate procedure and fill
+[`experiment-ledger.template.json`](https://github.com/radixark/miles/blob/main/examples/fleet/launch/experiment-ledger.template.json).
 The ledger is the durable link between the frozen Fleet task versions, exact
 model revision, trainer image digest, queued job, and resulting checkpoints.
 

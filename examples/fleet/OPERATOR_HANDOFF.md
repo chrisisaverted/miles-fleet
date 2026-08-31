@@ -178,28 +178,26 @@ candidate is:
 - source-job result 3/8, or 0.375, with all eight retained sessions agreeing on
   the task-version UUID, environment label, and data version.
 
-Build a one-row selector by filtering the already-reviewed 129-row selector;
-never reconstruct the row by hand:
+The capability gate no longer depends on publishing a one-task TaskSet. It uses
+`launch/capability-gate.authoritative-selection.v1.json`, an explicitly distinct
+`fleet.authoritative-selection.v1` source. That file freezes the reviewed row's
+task, task-version, environment-version, verifier-version, environment, data,
+and projection identities, plus the SHA-256 of the public prompt and verifier.
+`prepare_dataset.py` verifies the selection's exact byte digest, confirms the
+authenticated Fleet team, rehydrates the prompt from the production public API,
+and rejects any public field or hash drift before producing a training row.
 
-```bash
-export CAPABILITY_TASK_VERSION_ID='f31ebe83-0ff1-4660-bcba-59ffa4b82d5a'
-export CAPABILITY_SELECTION='/tmp/cysec1-2-capability-canary.selection.v1.json'
-
-jq -e --arg task_version_id "$CAPABILITY_TASK_VERSION_ID" '
-  {schema, tasks: [.tasks[] | select(.task_version_id == $task_version_id)]}
-  | select((.tasks | length) == 1)
-' "$SELECTION" > "$CAPABILITY_SELECTION"
-```
-
-Export this selector through the same read-only TaskDump v7 command and stop
-unless the single record returns the exact task, environment, and data pins
-above plus a non-null verifier-version UUID. Stage it under a distinct
-TaskSet repository such as `fleet/cysec1-2-current-gen-capability-canary`; do
-not reuse or relabel the 129-task cohort.
+This is not TaskDump v7 and does not claim equivalence. Its narrower contract is
+valid only for the authoritative backend: each episode calls the exact
+task-version route, and Fleet—not the training pod—provisions the server-owned
+seed and attachments and executes the pinned production verifier. The retained
+no-training proof is
+`launch/capability-gate-authoritative-selection-preflight.receipt.json`.
 
 The queue-safe payload differs from the behavior smoke in exactly three
-scientific controls: the immutable TaskSet has one reviewed task, the reward
-objective is `raw_capability_v1`, and the launcher mode is `debug_one_step`.
+scientific controls: the immutable authoritative selection has one reviewed
+task, the reward objective is `raw_capability_v1`, and the launcher mode is
+`debug_one_step`.
 That mode requests one rollout/optimizer step and a step-one checkpoint:
 
 ```json
@@ -211,7 +209,8 @@ That mode requests one rollout/optimizer step and a step-one checkpoint:
   "gpus_per_worker": 8,
   "pool": "gpu-b300",
   "env": {
-    "TASKSET_REF": "registry-alpha.fleetai.me/fleet/cysec1-2-current-gen-capability-canary@sha256:<approved-taskset-digest>",
+    "FLEET_AUTHORITATIVE_SELECTION": "examples/fleet/launch/capability-gate.authoritative-selection.v1.json",
+    "FLEET_AUTHORITATIVE_SELECTION_SHA256": "56602ed11012380d6cf2d1f00cefe6c13ac714ccfb2b71cf826af2a2043379db",
     "TASK_LIMIT": "1",
     "FLEET_BACKEND": "fleet_authoritative_cyber_v1",
     "FLEET_REWARD_OBJECTIVE": "raw_capability_v1"
@@ -221,9 +220,10 @@ That mode requests one rollout/optimizer step and a step-one checkpoint:
 ```
 
 Record this gate with `launch/capability-gate-ledger.template.json`. It remains
-blocked from submission until the TaskDump/TaskSet pins, trainer digest, and
-deployed Fleet rollout-reward route are all proven. A successful capability
-gate does not satisfy the behavior-bound selection gate below.
+blocked from submission until the selection readback, trainer digest, and
+deployed Fleet rollout-reward route are all proven. A successful capability gate
+does not satisfy the behavior-bound selection gate below, and TaskDump v7 is
+still required for the full frozen cohort.
 
 The formal current eligibility record is
 `launch/safety-eligibility-matrix.v1.json`. It deliberately keeps four facts
@@ -238,8 +238,8 @@ authority gap in that matrix.
 ### No-submit capability readiness packet
 
 The exact payload shape is checked in
-`launch/capability-gate-run.template.json`. Fill only its two digest
-placeholders after the relevant artifacts have been built and approved; do not
+`launch/capability-gate-run.template.json`. Fill only its trainer-image digest
+placeholder after the image has been built; do not
 change the model name, mode, task count, backend, or reward objective in the
 same experiment. Before rendering, make a run-specific copy, validate the
 immutable references, and hash it:
@@ -254,7 +254,8 @@ jq -e '
   .env.TASK_LIMIT == "1" and
   .env.FLEET_BACKEND == "fleet_authoritative_cyber_v1" and
   .env.FLEET_REWARD_OBJECTIVE == "raw_capability_v1" and
-  (.env.TASKSET_REF | test("^registry-alpha\\.fleetai\\.me/fleet/cysec1-2-current-gen-capability-canary@sha256:[0-9a-f]{64}$")) and
+  .env.FLEET_AUTHORITATIVE_SELECTION == "examples/fleet/launch/capability-gate.authoritative-selection.v1.json" and
+  .env.FLEET_AUTHORITATIVE_SELECTION_SHA256 == "56602ed11012380d6cf2d1f00cefe6c13ac714ccfb2b71cf826af2a2043379db" and
   (.command | contains("--model-name qwen3.6-27b")) and
   (.command | contains("--mode debug_one_step")) and
   ([paths(scalars) as $p | getpath($p) | strings | select(contains("<required:"))] | length) == 0
@@ -268,16 +269,17 @@ sha256sum "$CAPABILITY_PAYLOAD"
 Audit the rendered YAML, without applying it. It must request exactly one GPU
 head pod, zero worker groups, eight `gpu-b300-sxm` GPUs, queue `training-lq`,
 priority class `fleet-train-high`, 48 CPU and 1500Gi memory requested (64 CPU
-and 2400Gi limited), the immutable trainer digest, the immutable one-task
-TaskSet digest, and both the generated run credential secret and `fleet-api`
-secret. This is a render check, not permission to submit.
+and 2400Gi limited), the immutable trainer digest, the exact selection path and
+digest, and both the generated run credential secret and `fleet-api` secret.
+This is a render check, not permission to submit.
 
 The submit gate remains closed until every item is independently evidenced:
 
-1. Platform PR #758 (or an equivalent reviewed commit) exports the one exact
-   TaskDump v7 row and its non-null verifier-version UUID.
-2. The one-task TaskSet import is clean, its push is approved, and its digest
-   is recorded without a mutable-tag fallback.
+1. The frozen authoritative selection's digest matches the payload and its live
+   production readback matches every exposed identity and content hash.
+2. The no-training exact-version preflight provisions the live environment,
+   executes the production verifier, and confirms server-side cleanup. It must
+   be retained without relabeling this source as TaskDump v7.
 3. This Miles commit is built into a trainer image and that image's registry
    digest is recorded; the image must load `Qwen/Qwen3.6-27B` revision
    `6a9e13bd6fc8f0983b9b99948120bc37f49c13e9` without substitution.

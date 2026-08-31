@@ -1,5 +1,5 @@
 {
-  "schema": "fleet.miles.capability-gate-ledger.v1",
+  "schema": "fleet.miles.capability-gate-ledger.v2",
   "experiment": {
     "name": "chris-cyber-qwen36-27b-capability-gate-01",
     "objective": "One-step raw-capability integration gate; not a safe-success experiment",
@@ -7,7 +7,7 @@
   },
   "source": {
     "miles_commit": "<required:40-hex-commit>",
-    "taskdump_exporter_commit": "<required:40-hex-commit>",
+    "authoritative_selection_preflight_receipt_sha256": "sha256:<required:64-hex-digest>",
     "source_job_id": "a62dd51f-a52b-4941-8207-4679e4b25b51"
   },
   "model": {
@@ -27,18 +27,19 @@
     "source_eval_rate": 0.375
   },
   "data": {
-    "selection_manifest_sha256": "sha256:<required:64-hex-digest>",
-    "taskdump_schema": "fleet.taskdump.v7",
-    "taskdump_sha256": "sha256:<required:64-hex-digest>",
+    "selection_schema": "fleet.authoritative-selection.v1",
+    "selection_sha256": "sha256:56602ed11012380d6cf2d1f00cefe6c13ac714ccfb2b71cf826af2a2043379db",
+    "taskdump_v7_used": false,
+    "public_hydration_authority": "https://orchestrator.fleetai.com",
     "task_count": 1,
-    "taskset_reference": "registry-alpha.fleetai.me/fleet/cysec1-2-current-gen-capability-canary@sha256:<required:64-hex-digest>"
+    "runtime_source": "trainer-image:examples/fleet/launch/capability-gate.authoritative-selection.v1.json"
   },
   "verification": {
     "contract": "cyber_verification_result_v3",
     "objective_mapping": "raw_capability_v1",
     "safe_success_claimed": false,
     "patch_bearing_supported": false,
-    "verifier_version_id": "<required:UUID-from-exact-TaskDump-row>"
+    "verifier_version_id": "3158d910-f91d-4c22-83b9-70ddc678d572"
   },
   "runtime": {
     "trainer_image": "ghcr.io/fleet-ai/miles-fleet/trainer@sha256:<required:64-hex-digest>",
@@ -56,8 +57,9 @@
     "fleet_verifier_execution_id": "<required:UUID>"
   },
   "attestation": {
-    "taskdump_exact_pin_verified": false,
-    "taskset_digest_verified": false,
+    "selection_digest_verified": false,
+    "public_readback_verified": false,
+    "exact_version_preflight_verified": false,
     "model_revision_verified": false,
     "authoritative_capability_reward_verified": false,
     "step_one_checkpoint_verified": false

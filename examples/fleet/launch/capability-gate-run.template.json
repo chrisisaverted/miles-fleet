@@ -6,7 +6,8 @@
   "gpus_per_worker": 8,
   "pool": "gpu-b300",
   "env": {
-    "TASKSET_REF": "registry-alpha.fleetai.me/fleet/cysec1-2-current-gen-capability-canary@sha256:<required:64-hex-digest>",
+    "FLEET_AUTHORITATIVE_SELECTION": "examples/fleet/launch/capability-gate.authoritative-selection.v1.json",
+    "FLEET_AUTHORITATIVE_SELECTION_SHA256": "56602ed11012380d6cf2d1f00cefe6c13ac714ccfb2b71cf826af2a2043379db",
     "TASK_LIMIT": "1",
     "FLEET_BACKEND": "fleet_authoritative_cyber_v1",
     "FLEET_REWARD_OBJECTIVE": "raw_capability_v1"

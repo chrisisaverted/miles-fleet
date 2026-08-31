@@ -39,6 +39,7 @@ from examples.fleet.authoritative import (
     REPORT_ONLY_SUFFIX,
     SUPPORTED_OBJECTIVES,
 )
+from examples.fleet.authoritative_selection import hydrate_authoritative_rows
 
 # Seed payloads stream into env containers via `docker cp` under the SDK's
 # docker-op timeout (configurable since platform#470; runs export
@@ -178,7 +179,16 @@ def _write_jsonl(path: str, rows: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--taskset-ref", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--taskset-ref")
+    source.add_argument(
+        "--authoritative-selection",
+        help="immutable fleet.authoritative-selection.v1 file; distinct from TaskDump v7",
+    )
+    parser.add_argument(
+        "--authoritative-selection-sha256",
+        help="required byte digest for --authoritative-selection",
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--eval-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
@@ -199,14 +209,31 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from fleet_runtime.cli.sources import resolve_source
+    taskset = None
+    if args.authoritative_selection:
+        if args.backend != AUTHORITATIVE_BACKEND:
+            raise SystemExit("--authoritative-selection requires the authoritative Fleet backend")
+        if not args.authoritative_selection_sha256:
+            raise SystemExit("--authoritative-selection-sha256 is required")
+        rows = hydrate_authoritative_rows(
+            args.authoritative_selection,
+            api_key=os.environ.get("FLEET_API_KEY", ""),
+            expected_sha256=args.authoritative_selection_sha256,
+            reward_objective=args.reward_objective,
+        )
+        skipped = []
+        if args.max_tasks and len(rows) > args.max_tasks:
+            random.Random(args.seed).shuffle(rows)
+            rows = rows[: args.max_tasks]
+    else:
+        from fleet_runtime.cli.sources import resolve_source
 
-    # YAML-path refs get absolutized so the JSONL works from any cwd.
-    if os.path.isfile(args.taskset_ref):
-        args.taskset_ref = os.path.abspath(args.taskset_ref)
+        # YAML-path refs get absolutized so the JSONL works from any cwd.
+        if os.path.isfile(args.taskset_ref):
+            args.taskset_ref = os.path.abspath(args.taskset_ref)
 
-    taskset, _ = resolve_source(args.taskset_ref)
-    rows, skipped = build_rows(taskset, args.taskset_ref, args)
+        taskset, _ = resolve_source(args.taskset_ref)
+        rows, skipped = build_rows(taskset, args.taskset_ref, args)
 
     if skipped:
         print(f"skipped {len(skipped)} tasks:")
@@ -244,9 +271,11 @@ def main() -> None:
     with open(os.path.join(args.output_dir, "images.txt"), "w") as f:
         f.write("\n".join(needed) + ("\n" if needed else ""))
     print(f"images.txt: {len(needed)} env images for {len(selected)} tasks")
-    print(
-        f"taskset={taskset.name!r} root={taskset.root_digest[:24]} train={len(train_rows)} eval={len(eval_rows)} -> {args.output_dir}"
-    )
+    if taskset is None:
+        source_summary = f"authoritative_selection=sha256:{args.authoritative_selection_sha256[:24]}"
+    else:
+        source_summary = f"taskset={taskset.name!r} root={taskset.root_digest[:24]}"
+    print(f"{source_summary} train={len(train_rows)} eval={len(eval_rows)} -> {args.output_dir}")
 
 
 if __name__ == "__main__":

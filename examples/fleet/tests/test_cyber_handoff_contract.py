@@ -39,6 +39,9 @@ def test_capability_gate_is_exactly_pinned_and_does_not_claim_safe_success() -> 
     }
     assert ledger["verification"]["objective_mapping"] == "raw_capability_v1"
     assert ledger["verification"]["safe_success_claimed"] is False
+    assert ledger["schema"] == "fleet.miles.capability-gate-ledger.v2"
+    assert ledger["data"]["selection_schema"] == "fleet.authoritative-selection.v1"
+    assert ledger["data"]["taskdump_v7_used"] is False
     assert ledger["runtime"]["mode"] == "debug_one_step"
     assert ledger["runtime"]["requested_optimizer_steps"] == 1
 
@@ -84,7 +87,8 @@ def test_capability_run_packet_is_one_step_queue_safe_and_immutable() -> None:
     assert payload["gpus_per_worker"] == 8
     assert payload["pool"] == "gpu-b300"
     assert payload["env"] == {
-        "TASKSET_REF": "registry-alpha.fleetai.me/fleet/cysec1-2-current-gen-capability-canary@sha256:<required:64-hex-digest>",
+        "FLEET_AUTHORITATIVE_SELECTION": "examples/fleet/launch/capability-gate.authoritative-selection.v1.json",
+        "FLEET_AUTHORITATIVE_SELECTION_SHA256": "56602ed11012380d6cf2d1f00cefe6c13ac714ccfb2b71cf826af2a2043379db",
         "TASK_LIMIT": "1",
         "FLEET_BACKEND": "fleet_authoritative_cyber_v1",
         "FLEET_REWARD_OBJECTIVE": "raw_capability_v1",
@@ -94,3 +98,28 @@ def test_capability_run_packet_is_one_step_queue_safe_and_immutable() -> None:
     assert "--max-concurrent-envs 1" in payload["command"]
     assert "--max-concurrent-prepares 1" in payload["command"]
     assert payload["secrets"] == ["wandb-api", "fleet-api"]
+
+
+def test_authoritative_selection_is_distinct_from_taskdump_and_receipt_bound() -> None:
+    launch_dir = Path(__file__).resolve().parents[1] / "launch"
+    selection_path = launch_dir / "capability-gate.authoritative-selection.v1.json"
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    receipt_path = launch_dir / "capability-gate-preflight.receipt.json"
+
+    import hashlib
+
+    assert selection["schema"] == "fleet.authoritative-selection.v1"
+    assert selection["schema"] != "fleet.taskdump.v7"
+    assert selection["source"]["preflight_receipt_sha256"] == hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    task = selection["tasks"][0]
+    assert task["task_version_id"] == "f31ebe83-0ff1-4660-bcba-59ffa4b82d5a"
+    assert task["environment_version_id"] == "d70c4fe9-70c5-4020-91b1-a23d886a1e22"
+    assert task["verifier_version_id"] == "3158d910-f91d-4c22-83b9-70ddc678d572"
+
+    integrated_receipt = json.loads(
+        (launch_dir / "capability-gate-authoritative-selection-preflight.receipt.json").read_text(encoding="utf-8")
+    )
+    assert integrated_receipt["status"] == "passed_and_reaped"
+    assert integrated_receipt["selection"]["sha256"] == hashlib.sha256(selection_path.read_bytes()).hexdigest()
+    assert integrated_receipt["selection"]["public_task_fields_and_hashes_matched"] is True
+    assert integrated_receipt["cleanup"]["server_status"] == "stopped"

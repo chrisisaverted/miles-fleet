@@ -1,0 +1,25 @@
+{
+  "schema": "fleet.authoritative-selection.v1",
+  "source": {
+    "api_base": "https://orchestrator.fleetai.com",
+    "captured_at": "2026-08-31T05:58:32Z",
+    "preflight_receipt_sha256": "2a1aaaefa9171c79de80c6c97cc6ebb77c8d01988ed0c82ee45bf5c58b2faf34"
+  },
+  "tasks": [
+    {
+      "task_key": "cysec1-2-current-gen_blackbox-c17f94bad9b70de3dfa6f05c__blackbox_ctf_v1",
+      "task_version_id": "f31ebe83-0ff1-4660-bcba-59ffa4b82d5a",
+      "team_id": "a1025f0b-ad67-49fc-a023-51800ab43e84",
+      "environment_version_id": "d70c4fe9-70c5-4020-91b1-a23d886a1e22",
+      "env_key": "cysec1-2-current-gen",
+      "env_version": "v0.0.3",
+      "data_key": "commercial",
+      "data_version": "v0.0.9",
+      "verifier_id": "f7e0530d-4d17-4beb-a376-83a83ec6510f",
+      "verifier_version_id": "3158d910-f91d-4c22-83b9-70ddc678d572",
+      "verifier_sha256": "6d349f3106c2ff1c9419adfae8df0ff683b3ba72fcf486f34de50a36dcc5738b",
+      "prompt_sha256": "61bcc61236247c7bda0146ca95767e6ec1e433c81d4ae29177c80ca6abef1fd3",
+      "projection_id": "blackbox_ctf_v1"
+    }
+  ]
+}
