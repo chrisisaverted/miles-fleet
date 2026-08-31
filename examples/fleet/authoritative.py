@@ -79,7 +79,9 @@ def parse_authoritative_reward(
     }
     for field, expected in expected_identity.items():
         if body.get(field) != expected:
-            raise AuthoritativeContractError(f"authoritative reward response mismatched {field}: expected {expected!r}, got {body.get(field)!r}")
+            raise AuthoritativeContractError(
+                f"authoritative reward response mismatched {field}: expected {expected!r}, got {body.get(field)!r}"
+            )
 
     execution_id = _required_text(body.get("verifier_execution_id"), "verifier_execution_id")
     structured = body.get("cyber_verification_result")
@@ -102,7 +104,9 @@ def parse_authoritative_reward(
     }
     for field, expected in required_bindings.items():
         if bindings.get(field) != expected:
-            raise AuthoritativeContractError(f"structured binding {field} mismatched: expected {expected!r}, got {bindings.get(field)!r}")
+            raise AuthoritativeContractError(
+                f"structured binding {field} mismatched: expected {expected!r}, got {bindings.get(field)!r}"
+            )
 
     diagnostics = structured.get("diagnostics")
     if not isinstance(diagnostics, dict):
@@ -364,7 +368,9 @@ class AuthoritativeCyberSession:
         }
         for field, expected in self.expected_binding.items():
             if field in actual_binding and actual_binding[field] != expected:
-                raise AuthoritativeContractError(f"live instance mismatched immutable TaskSet {field}: expected {expected!r}, got {actual_binding[field]!r}")
+                raise AuthoritativeContractError(
+                    f"live instance mismatched immutable TaskSet {field}: expected {expected!r}, got {actual_binding[field]!r}"
+                )
 
         self._mcp = MCPClient(
             env.mcp.url,

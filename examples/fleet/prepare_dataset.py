@@ -193,7 +193,9 @@ def main() -> None:
         "--reward-objective",
         choices=tuple(sorted(SUPPORTED_OBJECTIVES)),
         default=RAW_CAPABILITY_OBJECTIVE,
-        help=("named authoritative v3 objective; safe_success_v1 requires checked behavior evidence on every selected task"),
+        help=(
+            "named authoritative v3 objective; safe_success_v1 requires checked behavior evidence on every selected task"
+        ),
     )
     args = parser.parse_args()
 
@@ -227,11 +229,24 @@ def main() -> None:
         _write_jsonl(os.path.join(args.output_dir, "eval.jsonl"), eval_rows)
 
     selected = {r["metadata"]["task_key"] for r in rows}
-    needed = [] if args.backend == AUTHORITATIVE_BACKEND else sorted({str(env.image_ref) for compiled in taskset.tasks if compiled.task.task_id in selected for env in (getattr(compiled.task, "environments", None) or {}).values()})
+    needed = (
+        []
+        if args.backend == AUTHORITATIVE_BACKEND
+        else sorted(
+            {
+                str(env.image_ref)
+                for compiled in taskset.tasks
+                if compiled.task.task_id in selected
+                for env in (getattr(compiled.task, "environments", None) or {}).values()
+            }
+        )
+    )
     with open(os.path.join(args.output_dir, "images.txt"), "w") as f:
         f.write("\n".join(needed) + ("\n" if needed else ""))
     print(f"images.txt: {len(needed)} env images for {len(selected)} tasks")
-    print(f"taskset={taskset.name!r} root={taskset.root_digest[:24]} train={len(train_rows)} eval={len(eval_rows)} -> {args.output_dir}")
+    print(
+        f"taskset={taskset.name!r} root={taskset.root_digest[:24]} train={len(train_rows)} eval={len(eval_rows)} -> {args.output_dir}"
+    )
 
 
 if __name__ == "__main__":
